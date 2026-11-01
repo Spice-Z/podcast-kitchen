@@ -93,7 +93,7 @@ def main():
     lp_applied = [e for e in lp if e["approved"] and e["action"] == "cut"]
     u = [(map_time(tm, s), map_time(tm, e)) for s, e in vad["union"]]
     jg = tm.get("jingle")   # the inserted pre-silence + jingle + post-silence is intentional, not a pause
-    gaps = [b0 - a1 - (jg["inserted_s"] if jg and a1 <= jg["jingle_start_s"] <= b0 else 0) for (a0, a1), (b0, b1) in zip(u, u[1:])]
+    gaps = [b0 - a1 - (jg.get("timeline_insert_s", jg["inserted_s"]) if jg and a1 <= jg["jingle_start_s"] <= b0 else 0) for (a0, a1), (b0, b1) in zip(u, u[1:])]
     res["long_pause"] = {"candidates": len(lp), "applied": len(lp_applied), "review": sum(e["action"] == "review" for e in lp),
                          "removed_s": r(sum(j["raw_cut"][1] - j["raw_cut"][0] for j in tm["joins"] if any(e["id"] in j["ids"] for e in lp_applied)), 2),
                          "longest_remaining_gap_s": r(max(gaps) if gaps else 0, 2)}

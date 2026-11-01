@@ -156,6 +156,13 @@ jingle:                         # mid-show jingle, inserted ONCE (pipeline/jingl
   avoid_margin_s: 1.0           # keep this far from overlaps (overlap_yield/restart edits) only; laughs/aizuchi are waited out (max_tail_s)
   segment_tolerance_s: 0.3      # a transcript segment running > this past both gap edges = mid-sentence (rejected)
   edge_fade_ms: 10              # fades on the voice either side of the insertion
+  track_shift: true             # chapter where the next speaker starts over the others' laugh/aizuchi/sentence tail: split ONLY that
+                                #   speaker's track before their onset, let the others finish, 0.4 s -> jingle -> 0.2 s, resume all (needs work/render stems)
+  shift_only_at_chapters: true  # track-shift only near chapter boundaries (within chapter_before_s/after_s); they rank like chapter pauses
+  max_shift_s: 3.0              # max tail wait (all-quiet point - split point)
+  split_pad_s: 0.05             # split this far before the shifted speaker's VAD onset
+  own_silence_s: 0.3            # shifted speaker must be silent at least this long before the onset (split lands in silence)
+  max_tail_overlap_s: 1.5       # another track's substantive line may run at most this past the onset (else overlap -> reject)
 
 ending_bgm:                     # render stage, after mix, before loudness (pipeline/ending_bgm.py)
   enabled: true

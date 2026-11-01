@@ -150,3 +150,72 @@ def test_tail_into_new_speech_or_too_long_is_rejected():
     segs = [(0, 20.0, "前の話でした。"), (26.0, 40.0, "次の話題に行きます")]
     assert J.gaps(islands, segs, [], 10, 35, 0.35, 0.5, 0.3, reactions=[(20.2, 25.5)], max_tail_s=4.0) == []
     assert J.gaps(islands, segs, [], 10, 35, 0.35, 0.5, 0.3, reactions=[(20.2, 25.5)], max_tail_s=6.0)[0][:2] == (25.5, 26.0)
+
+
+# ---- track-shift ----
+PS = {**P, "chapter_before_s": 5.0, "chapter_after_s": 2.0}
+
+
+def shift_scene(tail_end=21.0, tail_kind="react", other_start=None):
+    # a talks until 18 (sentence end), b laughs 19.5-tail_end, a's new topic starts at 20.0 (chapter at 20)
+    islands = [(5.0, 18.0, "a"), (19.5, tail_end, "b"), (20.0, 30.0, "a")]
+    segs = [(5.0, 18.0, "話しました。", "a"), (20.0, 30.0, "ちなみに次の話題ですが", "a")]
+    if tail_kind == "speech":
+        segs.append((19.5, tail_end, "いやほんとにそれは大事な話で", "b"))
+    if other_start is not None:
+        islands.append((other_start, other_start + 3, "b")); segs.append((other_start, other_start + 3, "えっと私も話したいのは", "b"))
+    react = [(19.5, tail_end)] if tail_kind == "react" else []
+    return sorted(islands), segs, react
+
+
+def test_shift_candidate_found_and_fields():
+    isl_, segs, rx = shift_scene()
+    out = J.shift_candidates(isl_, segs, rx, [20.0], PS, 10, 90)
+    assert len(out) == 1
+    T, _, sc, tail, info = out[0]
+    assert T == 21.0 and info == {"speaker": "a", "split_s": 19.95, "quiet_s": 21.0} and tail == pytest.approx(1.05)
+
+
+def test_shift_rejects_overlap_with_substantive_speech_and_cap():
+    isl_, segs, rx = shift_scene(tail_end=22.0, tail_kind="speech")      # b's real line runs 2 s past a's onset
+    assert J.shift_candidates(isl_, segs, rx, [20.0], PS, 10, 90) == []
+    isl_, segs, rx = shift_scene(other_start=20.5)                       # b starts real speech after the split
+    assert J.shift_candidates(isl_, segs, rx, [20.0], PS, 10, 90) == []
+    isl_, segs, rx = shift_scene(tail_end=23.5)                          # laugh tail > max_shift_s (3.0)
+    assert J.shift_candidates(isl_, segs, rx, [20.0], PS, 10, 90) == []
+    assert J.shift_candidates(isl_, segs, rx, [20.0], {**PS, "max_shift_s": 4.0}, 10, 90) != []
+
+
+def test_chapter_track_shift_beats_plain_pause():
+    gs = [(45.0, 46.5, True), (50.2, 50.2, True, 1.0, {"speaker": "a", "split_s": 49.0, "quiet_s": 50.2})]
+    g, why = J.choose(gs, [49.5], 100.0, P)
+    assert g[0] == 50.2 and "chapter" in why
+
+
+def test_write_track_shift_keeps_every_sample_and_exact_silences(tmp_path):
+    import soundfile as sf
+    ep = tmp_path / "ep"; (ep / "work/render").mkdir(parents=True)
+    n = SR * 40; rng = np.random.default_rng(0)
+    a = np.zeros(n); b = np.zeros(n)
+    a[: 18 * SR] = rng.uniform(-.3, .3, 18 * SR); a[20 * SR:] = rng.uniform(-.3, .3, n - 20 * SR)
+    b[int(19.5 * SR): int(20.9 * SR)] = rng.uniform(-.3, .3, int(1.4 * SR))   # quiet by T = 21.0
+    sf.write(str(ep / "work/render/a.wav"), a, SR, subtype="FLOAT"); sf.write(str(ep / "work/render/b.wav"), b, SR, subtype="FLOAT")
+    a, b = sf.read(str(ep / "work/render/a.wav")), sf.read(str(ep / "work/render/b.wav"))[0]; a = a[0]
+    p = {**J.DEF, "edge_fade_ms": 0}
+    pre, post = int(0.4 * SR), int(0.2 * SR); jin = np.full(SR, 0.5)
+    ins = np.concatenate([np.zeros(pre), jin, np.zeros(post)])
+    ts = {"speaker": "a", "split_s": 19.95, "quiet_s": 21.0}
+    J.write_track_shift(ep, ep / "work/mix.wav", SR, 1, ts, 21.0, ins, p)
+    y, _ = sf.read(str(ep / "work/mix.wav"))
+    sp, T, L = int(19.95 * SR), 21 * SR, len(ins); D = T - sp + L
+    assert len(y) == n + D
+    exp = np.zeros(n + D)
+    exp[:sp] += a[:sp]; exp[sp + D:] += a[sp:]
+    exp[:T] += b[:T]; exp[T + D:] += b[T:]
+    exp[T:T + L] += ins
+    assert np.allclose(y, exp, atol=1e-6)                                 # nothing lost, nothing reordered
+    assert np.all(y[T:T + pre] == 0) and np.all(y[T + pre + SR:T + L] == 0)  # exact 0.4 / 0.2 s silences
+    assert np.allclose(y[T + L:T + L + SR], a[sp:sp + SR])                # a resumes from its split point right after
+    tm = {"spans": [[0.0, 40.0, 0.0]], "joins": [], "edited_duration_s": 40.0}
+    tm2, d = J.splice(tm, 19.95, 19.95, D / SR)
+    assert J.map_time(tm2, 25.0) == pytest.approx(25.0 + D / SR)          # chapters after the split shift by D
