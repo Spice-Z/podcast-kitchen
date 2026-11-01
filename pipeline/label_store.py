@@ -10,6 +10,11 @@ Labels are never regenerated: `seed` only adds missing keys with the rule defaul
 edits.json entry: {id, key, type, track, start, end, action, approved, labeler, reason, excerpt, confidence, note}
 manual_edits.json (optional, episode root): [{start, end, track, action, approved, note}] for edits no rule can find
 (e.g. a retake the ASR merged away). They are appended as type "manual" with key m-<start>-<end>.
+Structural edits (config `structure`, built every time, not labels):
+  opening_chatter  cut [0, theme start - lead_s): theme start = first raw/transcript.csv line containing
+                   manifest/config structure.opening_chatter.start_text, else the first line at >= min_s matching
+                   start_markers; snapped to the VAD onset of that speech. Off when no transcript or no match.
+  edge_trim        cut leading/trailing silence so at most structure.edge_silence_s remains (VAD-based).
 Render applies an entry only if approved is true and action in {cut, duck, mute}."""
 import argparse, sys
 from pathlib import Path
@@ -56,6 +61,45 @@ def manual(ep):
     return out
 
 
+def structural(ep, cfg):
+    S = cfg.get("structure") or {}
+    vad = load(ep / "work/vad.json"); U = vad["union"]; dur = vad["duration_s"]; out = []
+    if not U:
+        return out
+    pad = S.get("edge_silence_s", 0.4)
+    head = max(0.0, U[0][0] - pad); oc = S.get("opening_chatter") or {}
+    man = load(ep / "manifest.json"); oc = {**oc, **(man.get("opening_chatter") or {})}
+    tp = ep / "raw/transcript.csv"
+    if oc.get("enabled") and tp.exists():
+        import re
+        from zencastr_transcript import read_rows
+        rows = sorted(read_rows(tp))
+        off = cfg["transcript"].get("offset_s", 0.0)
+        hit = None
+        if oc.get("start_text"):
+            hit = next((r_ for r_ in rows if oc["start_text"] in r_[2]), None)
+        else:
+            pat = re.compile("|".join(oc.get("start_markers", [])))
+            hit = next((r_ for r_ in rows if r_[0] >= oc.get("min_s", 0) and r_[0] <= oc.get("max_s", 600) and pat.search(r_[2])), None)
+        if hit:
+            t = hit[0] + off
+            onset = next((a for a, b in U if b > t - 0.5), t)
+            cut = max(0.0, min(t, onset) - oc.get("lead_s", 0.3))
+            if cut > head:
+                head = cut
+                out.append({"id": "s0000", "key": f"s-opening-{cut:.3f}", "type": "opening_chatter", "track": "all", "start": 0.0, "end": round(cut, 3),
+                            "action": "cut", "approved": True, "labeler": "rule", "reason": "opening small talk before main theme",
+                            "excerpt": hit[2], "confidence": 1.0, "note": f"theme starts at transcript {hit[0]:.2f}s"})
+    if not out and head > 0.01:
+        out.append({"id": "s0001", "key": f"s-head-{head:.3f}", "type": "edge_trim", "track": "all", "start": 0.0, "end": round(head, 3),
+                    "action": "cut", "approved": True, "labeler": "rule", "reason": "leading silence", "excerpt": "", "confidence": 1.0, "note": ""})
+    tail = U[-1][1] + pad
+    if dur - tail > 0.01:
+        out.append({"id": "s0002", "key": f"s-tail-{tail:.3f}", "type": "edge_trim", "track": "all", "start": round(tail, 3), "end": dur,
+                    "action": "cut", "approved": True, "labeler": "rule", "reason": "trailing silence", "excerpt": "", "confidence": 1.0, "note": ""})
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--ep", required=True)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -82,7 +126,7 @@ def main():
                 L["approved"] = True; n += 1
         dump(lp, labels); print("approved", n)
     elif a.cmd == "build":
-        e = build(cands, labels) + manual(ep); dump(ep / "work/edits.json", e)
+        e = build(cands, labels) + manual(ep) + structural(ep, cfg); dump(ep / "work/edits.json", e)
         print("edits", len(e), "applied", sum(1 for x in e if x["approved"] and x["action"] in ("cut", "duck", "mute")))
     else:
         from collections import Counter

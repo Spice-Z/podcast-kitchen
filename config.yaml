@@ -150,3 +150,18 @@ qa:
   level_jump_db: 6              # flagged (not failing): RMS 50 ms either side of join
   head_tail_s: 30
   head_tail_max_silence_s: 1.0
+  edge_max_silence_s: 0.5       # leading/trailing silence on the MP3
+  write_clips: false            # per-join WAV clips in work/qa (debug only)
+
+structure:                      # edits built from structure, not labels (label_store.py structural)
+  edge_silence_s: 0.3           # leading/trailing silence kept (QA max 0.5)
+  opening_chatter:              # cut small talk before the main theme
+    enabled: true
+    lead_s: 0.3                 # clean start: silence kept before the theme line
+    min_s: 0
+    max_s: 600                  # only search the first 10 min
+    start_markers: ["今日は", "今回は", "本日は", "テーマ", "始めた", "周年"]
+    # per-episode override in manifest.json: "opening_chatter": {"start_text": "<exact transcript text>"}
+
+output:                         # MP3-only delivery: out/<slug>.mp3 (+ chapters.json); no WAV master
+  delete_render_wavs: true      # delete work/mix.wav, work/render/*.wav after encoding

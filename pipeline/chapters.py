@@ -1,4 +1,4 @@
-"""Step 6: chapters from the WAV master + timemap.json (no re-ASR).
+"""Step 6: chapters from the MP3 + timemap.json (no re-ASR).
 Input: <ep>/chapters_raw.json [{"raw_s": float, "title": str}] written by the agent from the raw
 transcript (titles confirmed by a human); if absent a single 00:00 chapter is used.
 Raw times are mapped through timemap.json; chapter starts are clamped to the master duration.
@@ -18,7 +18,7 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--ep", required=True); a = ap.parse_args()
     ep = Path(a.ep); cfg = load_cfg(ep); slug = load(ep / "manifest.json")["slug"]
     tm = load(ep / "work/timemap.json")
-    master = ep / "out" / f"{slug}_master.wav"
+    master = ep / "out" / f"{slug}.mp3"
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(master)],
                                capture_output=True, text=True).stdout)
     src = ep / "chapters_raw.json"

@@ -49,16 +49,20 @@
 
 ## 7. ラウドネス（pipeline/loudness.py：唯一のラウドネスツール）
 - ffmpeg loudnorm 2 パス、`linear=true`。線形にならなければ停止。予測 TP が `loudness.max_true_peak_dbtp - limiter_headroom_db` を超える場合のみ事前に alimiter。
-- 目標 **-16 LUFS ±`qa.lufs_tolerance`、TP ≤ -1.0 dBTP**（WAV・MP3 両方を QA で測定）。
+- 目標 **-16 LUFS ±`qa.lufs_tolerance`、TP ≤ -1.0 dBTP**（納品物の MP3 を QA で測定）。
 
 ## 8. チャプター（pipeline/chapters.py）
 - 再 ASR はしない。raw 文字起こしからタイトルと raw 時刻を `chapters_raw.json` に書き、timemap で編集後時刻へ変換。
 - `out/chapters.json`（Podcasting 2.0）と MP3 の ID3 CHAP/CTOC を書く。`chapters.min_gap_s` 未満の間隔は停止。
 
 ## 9. QA（pipeline/qa.py）
-- WAV/MP3 の LUFS・TP、各カット点の 2 s クリップ（`qa.clip_s`）書き出し、クリック = ±2 ms の最大サンプル差 / 周辺 ±50 ms の中央値 > `qa.click_ratio` かつ > `qa.click_min_abs`、レベル跳び > `qa.level_jump_db`、冒頭/末尾無音、long_pause の件数・削減秒・最長残存ギャップ。`logs/qa.md` に記録、失敗で exit 1。最後に人間が通し試聴。
+- MP3 の LUFS・TP（クリック検査は MP3 を一時 WAV にデコードして実施、終了後削除）、先頭/末尾無音 ≤ `qa.edge_max_silence_s`（0.5 s）、クリック = ±2 ms の最大サンプル差 / 周辺 ±50 ms の中央値 > `qa.click_ratio` かつ > `qa.click_min_abs`、レベル跳び > `qa.level_jump_db`、冒頭/末尾無音、long_pause の件数・削減秒・最長残存ギャップ。`logs/qa.md` に記録、失敗で exit 1。最後に人間が通し試聴。
 
 ## 10. 納品物（リポジトリ外）
-- `out/<slug>_master.wav`（48 kHz / 24bit / デュアルモノ stereo）、`out/<slug>.mp3`（192 kbps CBR / 44.1 kHz）、`out/chapters.json`
+- **MP3 のみ納品**：`out/<slug>.mp3`（192 kbps CBR / 44.1 kHz stereo）と `out/chapters.json`。WAV マスターは作らない。レンダー中の一時 WAV（normalized.tmp / prelimited / mix / render/*.wav）はエンコード後に削除（`output.delete_render_wavs`）。
+
+## 構造編集（常時適用）
+- **opening_chatter**：本題開始前の雑談はカット。Zencastr 文字起こしで挨拶後に最初に番組/テーマを切り出す行（`structure.opening_chatter.start_markers`、例「今日は」「周年」「始めた」）を探し、その発話の VAD 立ち上がり − `lead_s` まで削除。外れる場合は manifest.json の `opening_chatter.start_text` に正確な行を書いて固定。カット点は前後の行を引用して報告する。
+- **edge_trim**：先頭/末尾の無音は `structure.edge_silence_s`（0.3 s）まで詰める。
 - ショーノート（概要・トピック・リンク・mm:ss チャプター）。リンク検索は任意で、確認していないものは **未確認** と明記。
 - 種別ごとの件数と削減秒、未適用の review 一覧。アップロード・公開・送信はしない。

@@ -130,7 +130,7 @@ def main():
     if missing:
         raise SystemExit(f"render: {len(missing)} unlabeled candidates; refusing to render")
     edits = load(ep / "work/edits.json")
-    if {e["key"] for e in edits if e["type"] != "manual"} != {x["key"] for x in cands}:
+    if {e["key"] for e in edits if e["type"] not in ("manual", "opening_chatter", "edge_trim")} != {x["key"] for x in cands}:
         raise SystemExit("render: edits.json is stale vs candidates.json; run label_store.py build")
     vad = load(ep / "work/vad.json")
     spk = speakers(ep)

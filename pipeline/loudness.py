@@ -1,8 +1,8 @@
 """Step 5b: the one loudness tool: ffmpeg loudnorm, two-pass, linear only.
 pass 1 measure -> if the linear gain would push true peak above (max_true_peak - limiter_headroom),
 pre-limit with alimiter at the needed ceiling and re-measure -> pass 2 linear=true. Fails if ffmpeg
-reports normalization_type != linear. Writes out/<slug>_master.wav (48k/24-bit, dual-mono stereo)
-and out/<slug>.mp3 (LAME CBR, 44.1k stereo) and logs/loudness.json."""
+reports normalization_type != linear. Deliverable: out/<slug>.mp3 only (LAME CBR, 44.1k stereo). The normalized
+WAV is a temp file in work/ deleted after encoding, as are prelimited.wav and (with output.delete_render_wavs) mix.wav + work/render/*.wav and logs/loudness.json."""
 import argparse, json, re
 from pathlib import Path
 from common import dump, load, load_cfg, log_step, run, r
@@ -35,7 +35,7 @@ def main():
     ln = (f"loudnorm=I={L['target_lufs']}:TP={L['max_true_peak_dbtp']}:LRA={L['lra']}:linear=true:"
           f"measured_I={m1['input_i']}:measured_TP={m1['input_tp']}:measured_LRA={m1['input_lra']}:"
           f"measured_thresh={m1['input_thresh']}:offset={m1['target_offset']}:print_format=json")
-    M = L["master"]; master = ep / "out" / f"{slug}_master.wav"
+    M = L["master"]; master = ep / "work" / "normalized.tmp.wav"
     p = run(["ffmpeg", "-nostdin", "-hide_banner", "-y", "-i", str(src), "-af",
              f"{ln},aresample=resampler=soxr:osr={M['sample_rate']}",
              "-c:a", M["codec"], *BX, str(master)])
@@ -45,6 +45,11 @@ def main():
     P = L["mp3"]; mp3 = ep / "out" / f"{slug}.mp3"
     run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(master), "-af", f"aresample=resampler=soxr:osr={P['sample_rate']}",
          "-ac", str(P["channels"]), "-c:a", P["codec"], "-b:a", P["bitrate"], *BX, "-write_xing", "1", "-id3v2_version", "0", str(mp3)])
+    master.unlink(missing_ok=True); (ep / "work/prelimited.wav").unlink(missing_ok=True)
+    (ep / "out" / f"{slug}_master.wav").unlink(missing_ok=True)
+    if cfg.get("output", {}).get("delete_render_wavs", True):
+        (ep / "work/mix.wav").unlink(missing_ok=True)
+        for w in (ep / "work/render").glob("*.wav"): w.unlink()
     dump(ep / "logs/loudness.json", log)
     log_step(ep, "loudness", {"type": m2["normalization_type"]})
     print("loudness ok", m2["output_i"], m2["output_tp"], m2["normalization_type"])
