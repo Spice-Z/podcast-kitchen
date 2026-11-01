@@ -14,6 +14,8 @@ step() { echo "== $1"; shift; "$@"; }
 rstep() { local out=$EP/$2; if [ "${RESUME:-1}" = 1 ] && [ -e "$out" ]; then echo "== $1 (skip: $2 exists)"; else step "$1" "${@:3}"; fi; }
 case $PHASE in
   prep)
+    # a skipped ingest must not leave a stale episode config (KEEP_CONFIG=1 keeps per-episode edits)
+    if [ -e "$EP/manifest.json" ] && [ "${KEEP_CONFIG:-0}" != 1 ]; then cp "$HERE/config.yaml" "$EP/config.yaml"; fi
     rstep ingest manifest.json      $MAIN $P/ingest.py --ep "$EP" "$@"
     rstep sync logs/sync.json        $MAIN $P/sync.py --ep "$EP"
     rstep clean_dfn logs/env_dfn.json   $DFN  $P/clean_dfn.py --ep "$EP"
