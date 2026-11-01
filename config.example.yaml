@@ -1,0 +1,50 @@
+# スキルで固定しているパラメータ（変更時は logs/notes.md に理由を記録）
+ingest:
+  sample_rate: 48000
+  codec: pcm_s24le
+  channels: 1
+  max_duration_diff_s: 5
+align:
+  xcorr_window_s: 120
+  xcorr_downsample_hz: 8000
+  min_offset_ms: 20
+clean:
+  ffmpeg_chain: "highpass=f=80, afftdn=nr=12:nf=-50, acompressor=threshold=-20dB:ratio=3:attack=5:release=100"
+  denoise_model: DeepFilterNet3     # 推奨: --atten-lim 12-20 dB
+  dynamics: pedalboard              # HPF 80Hz -> de-ess -> Compressor -> Limiter
+mix:
+  amix: "amix=inputs=N:normalize=0"
+asr:
+  model: kotoba-tech/kotoba-whisper-v2.0   # faster-whisper 変換版
+  device: cpu
+  compute_type: float32   # int8 禁止（出力崩壊）
+  language: ja
+  beam_size: 5
+  temperature: 0.0
+  condition_on_previous_text: false
+  vad_filter: true
+  per_speaker: true
+alignment:
+  backend: torchaudio.pipelines.MMS_FA
+  sample_rate: 16000
+cuts:
+  silence_detect: "silencedetect=n=-45dB:d=1.5"
+  silence_keep_s: 0.6        # 両側 0.3 s ずつ残す
+  false_start_window_s: 3
+  crosstalk_min_overlap_s: 2
+  protect_head_tail_s: 30
+  types: [silence, filler, backchannel_duck, overlap_yield, false_start, crosstalk, mistake, review]
+render:
+  crossfade_s: 0.01
+  loudnorm: "loudnorm=I=-16:TP=-1.5:LRA=11"   # 2パス, linear=true
+  master: {sample_rate: 48000, bit_depth: 24, channels: 2}
+  mp3: {codec: libmp3lame, bitrate: 192k, sample_rate: 44100, channels: 2}
+qa:
+  target_lufs: -16
+  lufs_tolerance: 0.5
+  max_true_peak_dbtp: -1.0
+  cut_clip_s: 3
+  click_jump_full_scale: 0.1
+  head_tail_max_silence_s: 1
+  chapter_check_s: 10
+  chapter_min_gap_s: 120
