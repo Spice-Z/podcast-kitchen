@@ -59,7 +59,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ep", required=True)
     ap.add_argument("--track", action="append", required=True, help="speaker=path (speaker: lowercase ascii)")
-    ap.add_argument("--transcript")
+    ap.add_argument("--transcript", action="append", default=[], help="Zencastr export: CSV/TSV (timed, primary) and/or TXT")
     ap.add_argument("--speaker", action="append", default=[], help="'Transcript Name=track' (stored only in the episode manifest)")
     ap.add_argument("--keep-config", action="store_true", help="keep an existing per-episode config.yaml override")
     a = ap.parse_args()
@@ -115,8 +115,8 @@ def main():
         if v["length_diff_s"] > ic["max_length_diff_s"]:
             raise SystemExit(f"{spk}: {v['length_diff_s']} s shorter than longest track -> check offsets")
     has_tr = False
-    if a.transcript:
-        src = Path(a.transcript)
+    for t in a.transcript:
+        src = Path(t)
         shutil.copy2(src, ep / "raw" / ("transcript.csv" if src.suffix.lower() in (".csv", ".tsv") else f"transcript{src.suffix}"))
         has_tr = True
     dump(ep / "logs" / "probe.json", tracks)

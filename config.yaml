@@ -56,6 +56,7 @@ vad:                            # the only VAD: Silero
   speech_pad_ms: 30
 
 transcript:                     # primary text source: Zencastr TSV (raw/transcript.csv) -> zencastr_transcript.py
+  source: zencastr              # zencastr (default) | asr (force full kotoba ASR). Full ASR also runs if there is no CSV.
   offset_s: 0.0                 # transcript clock vs synced timeline
   max_utt_s: 30                 # an utterance never spans longer than this
   snap_s: 0.6                   # snap utterance start to a VAD island onset within this
