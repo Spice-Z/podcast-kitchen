@@ -56,7 +56,7 @@ def main():
         drift_ppm = (off1 - off0) / span * 1e6 if span > 0 else 0.0
         conf = min(c0, c1)
         info = {"offset_start_s": r(off0), "offset_end_s": r(off1), "conf_start": r(c0), "conf_end": r(c1),
-                "drift_ppm": r(drift_ppm, 1), "action": "none"}
+                "drift_ppm": r(drift_ppm, 1), "action": "none", "applied_offset_s": 0.0}
         y = x
         if conf < sc["min_peak_confidence"]:
             info["action"] = "none (low confidence; tracks assumed aligned)"
@@ -70,6 +70,7 @@ def main():
                 k = int(round(off0 * sr))
                 y = y[k:] if k > 0 else np.concatenate([np.zeros(-k), y])
                 info["action"] += f"; shifted {-k} samples"
+                info["applied_offset_s"] = r(-k / sr)  # add to a source-relative time (e.g. transcript) of this track
         L_ref = len(wav[ref][0])
         y = y[:L_ref] if len(y) >= L_ref else np.concatenate([y, np.zeros(L_ref - len(y))])
         write_wav(dst, y, sr)

@@ -19,7 +19,9 @@ def chunks(islands, gap, max_len):
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--ep", required=True); a = ap.parse_args()
+    ap = argparse.ArgumentParser(); ap.add_argument("--ep", required=True)
+    ap.add_argument("--gaps", action="store_true", help="fallback: only transcribe logs/transcript_coverage.json spans, merge into asr.json")
+    a = ap.parse_args()
     ep = Path(a.ep); cfg = load_cfg(ep); c = cfg["asr"]; th = cfg["env"]["threads"]; pin_threads(th)
     import faster_whisper, ctranslate2
     from faster_whisper import WhisperModel, download_model
@@ -27,12 +29,14 @@ def main():
     path = download_model(m["repo"], revision=m["revision"], local_files_only=True)
     model = WhisperModel(path, device=c["device"], compute_type=c["compute_type"], cpu_threads=th, num_workers=1)
     vad = load(ep / "work/vad.json")
+    gaps = load(ep / "logs/transcript_coverage.json") if a.gaps else None
     res, flags = {}, []
     for s in speakers(ep):
         x, sr = read_wav(ep / "work/level" / f"{s}.wav")
         y = resample_poly(x, 16000, sr).astype(np.float32)
         segs = []
-        for cs, ce in chunks(vad["speakers"][s], c["merge_gap_s"], c["max_chunk_s"]):
+        spans = gaps.get(s, []) if a.gaps else vad["speakers"][s]
+        for cs, ce in chunks(spans, c["merge_gap_s"], c["max_chunk_s"]):
             a0, a1 = int(cs * 16000), int(ce * 16000)
             out, _ = model.transcribe(y[a0:a1], language=c["language"], beam_size=c["beam_size"], temperature=c["temperature"],
                                       condition_on_previous_text=c["condition_on_previous_text"], word_timestamps=False,
@@ -45,10 +49,14 @@ def main():
                 if g.avg_logprob < c["log_prob_threshold"]: f.append("low_logprob")
                 if g.compression_ratio > c["compression_ratio_threshold"]: f.append("high_compression")
                 seg = {"start": r(cs + g.start), "end": r(min(ce, cs + g.end)), "text": t, "chunk": [r(cs), r(ce)],
-                       "avg_logprob": r(g.avg_logprob), "no_speech_prob": r(g.no_speech_prob), "flags": f}
+                       "avg_logprob": r(g.avg_logprob), "no_speech_prob": r(g.no_speech_prob), "flags": f,
+                       "source": "asr_fallback" if a.gaps else "asr"}
                 segs.append(seg)
                 if f: flags.append({"speaker": s, **seg})
         res[s] = segs
+    if a.gaps:  # merge into the transcript-derived segments
+        base = load(ep / "work/asr.json")
+        res = {s: sorted(base.get(s, []) + res.get(s, []), key=lambda g: g["start"]) for s in speakers(ep)}
     dump(ep / "work/asr.json", res)
     dump(ep / "logs/asr_fallbacks.json", flags)
     dump(ep / "logs/env_asr.json", {"model": m, "faster_whisper": faster_whisper.__version__, "ctranslate2": ctranslate2.__version__,

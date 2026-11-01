@@ -60,6 +60,7 @@ def main():
     ap.add_argument("--ep", required=True)
     ap.add_argument("--track", action="append", required=True, help="speaker=path (speaker: lowercase ascii)")
     ap.add_argument("--transcript")
+    ap.add_argument("--speaker", action="append", default=[], help="'Transcript Name=track' (stored only in the episode manifest)")
     ap.add_argument("--keep-config", action="store_true", help="keep an existing per-episode config.yaml override")
     a = ap.parse_args()
     ep = Path(a.ep)
@@ -116,10 +117,11 @@ def main():
     has_tr = False
     if a.transcript:
         src = Path(a.transcript)
-        shutil.copy2(src, ep / "raw" / f"transcript{src.suffix}")
+        shutil.copy2(src, ep / "raw" / ("transcript.csv" if src.suffix.lower() in (".csv", ".tsv") else f"transcript{src.suffix}"))
         has_tr = True
     dump(ep / "logs" / "probe.json", tracks)
     dump(ep / "manifest.json", {"slug": ep.name, "speakers": sorted(tracks), "transcript": has_tr,
+                                "speaker_map": dict(x.rsplit("=", 1) for x in a.speaker),
                                 "tools": versions, "config_sha256": sha256(ep / "config.yaml")})
     log_step(ep, "ingest", {"tracks": len(tracks)})
     print("ingest ok", {k: (v["decoded_s"], v["start_offset_s"]) for k, v in tracks.items()})

@@ -55,7 +55,15 @@ vad:                            # the only VAD: Silero
   min_silence_ms: 200
   speech_pad_ms: 30
 
-asr:
+transcript:                     # primary text source: Zencastr TSV (raw/transcript.csv) -> zencastr_transcript.py
+  offset_s: 0.0                 # transcript clock vs synced timeline
+  max_utt_s: 30                 # an utterance never spans longer than this
+  snap_s: 0.6                   # snap utterance start to a VAD island onset within this
+  end_pad_s: 0.1
+  uncovered_min_s: 1.5          # speaker VAD islands this long with no utterance -> logs/transcript_coverage.json
+
+asr:                            # kotoba-whisper: full-episode ASR only when there is no Zencastr transcript
+  fallback: "off"               # off | gaps: also transcribe transcript_coverage gaps (asr.py --gaps) and merge
   device: cpu
   compute_type: float32         # int8 forbidden (garbage output)
   language: ja

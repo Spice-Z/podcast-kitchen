@@ -22,7 +22,13 @@ case $PHASE in
     rstep clean_dyn work/clean/.done   $MAIN $P/clean_dynamics.py --ep "$EP"
     rstep level logs/level.json       $MAIN $P/level.py --ep "$EP"
     rstep vad work/vad.json         $MAIN $P/vad.py --ep "$EP"
-    rstep asr work/asr.json         $DFN  $P/asr.py --ep "$EP"
+    if [ -e "$EP/raw/transcript.csv" ]; then   # Zencastr transcript is the primary text; ASR only as optional gap fallback
+      rstep transcript work/asr.json  $MAIN $P/zencastr_transcript.py --ep "$EP"
+      if [ "$($MAIN -c "import yaml;print(yaml.safe_load(open('$EP/config.yaml'))['asr']['fallback'])")" = gaps ] && [ ! -e "$EP/logs/asr_gaps.done" ]; then
+        step asr_gaps $DFN $P/asr.py --ep "$EP" --gaps && touch "$EP/logs/asr_gaps.done"; fi
+    else
+      rstep asr work/asr.json         $DFN  $P/asr.py --ep "$EP"
+    fi
     rstep align_kana work/words.json  $MAIN $P/align_kana.py --ep "$EP"
     step candidates  $MAIN $P/candidates.py --ep "$EP"
     step seed        $MAIN $P/label_store.py --ep "$EP" seed
