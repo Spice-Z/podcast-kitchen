@@ -190,6 +190,16 @@ gate:                           # per-track speech gating after cleaning/levelli
   flatness_min: 0.3             # spectral flatness above this -> noise-like
   edge_tail_min_s: 0.2          # unvoiced run at a voiced VAD island head/tail >= this -> muted (sniff glued to speech)
   edge_keep_s: 0.05             # kept next to the speech (word-final unvoiced consonants)
+  burst_enabled: true          # cough / throat-clear rule (separate from sniff; band-independent)
+  burst_max_s: 0.6              # island at most this long, no firm text, no laugh/backchannel
+  burst_onset_db: 30            # level rise within burst_onset_ms ...
+  burst_onset_ms: 40
+  burst_floor_db: 10            # ... starting within this of the track noise floor
+  burst_voicing_max: 0.5        # unstable pitch: median 20 ms frame voicing below this ...
+  burst_jump_max: 0.15          # ... or median frame-to-frame f0 jump above this
+  burst_island_voicing_max: 0.6 # whole-island voicing at/above this = steady hum (んー), never a burst
+  burst_word_max_s: 1.5         # an aligned word token (<= this long, i.e. not smeared) covering half the island -> a word, not a burst
+  burst_gap_s: 0.2              # at least this after the speaker's own voiced speech end (decays are never bursts)
   fill_track: host              # room tone fill where every track is gated
   transient_rise_db: 15         # QA metric: burst = frames this far above the track noise floor, outside speech
   noise_floor_min_db: -80

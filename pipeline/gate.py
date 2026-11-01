@@ -5,7 +5,8 @@ Each speaker track is muted (gate.attenuation_db; "-inf" = full mute) outside it
   where word spans count only where they overlap own VAD islands (pads anchored to VAD edges, smear dropped),
   minus non-speech transients: VAD islands <= transient_max_s without firm text (a word mostly inside the island),
   no laugh/backchannel, and low voicing (autocorr peak 80-400 Hz < voicing_max) or high spectral flatness (> flatness_min) — sniffs, coughs,
-  throat-clears; plus unvoiced energy bursts inside padded regions but outside voiced VAD (pad zones, merged gaps),
+  throat-clears; coughs/throat-clears that are low-band are caught by a separate burst rule (sudden onset from the
+  noise floor + unstable pitch, no firm text, <= burst_max_s, >= burst_gap_s after own voiced speech); plus unvoiced energy bursts inside padded regions but outside voiced VAD (pad zones, merged gaps),
   classified per sub-window. Regions are padded (pad_before_ms / pad_after_ms), gaps < merge_gap_ms merged, edges faded (fade_ms).
 Room tone continuity: where every track is gated, the reference track (gate.fill_track) gets its own room tone
 (render.roomtone: quietest VAD-free window that is also burst-free; source logged) faded in, so the mix never drops to digital silence.
@@ -81,6 +82,38 @@ def decaying(ws, i):
     if j == 0:
         return False
     return all(ws[k]["db"] <= ws[k - 1]["db"] + 1.0 for k in range(j, i + 1))
+
+
+def f0_track(y, sr, hop=0.02):
+    """Per 20 ms frame: (f0 Hz, normalized autocorr peak 60-400 Hz)."""
+    n = int(hop * sr); out = []
+    for i in range(0, len(y) - n + 1, n):
+        x = y[i:i + n] - y[i:i + n].mean()
+        if not np.any(x):
+            out.append((0.0, 0.0)); continue
+        f = np.fft.rfft(x, 2 * n); ac = np.fft.irfft(f * np.conj(f))[:n]
+        lo, hi = int(sr / 400), min(n - 1, int(sr / 60))
+        k = lo + int(np.argmax(ac[lo:hi])); out.append((sr / k, float(ac[k] / (ac[0] + 1e-12))))
+    return out
+
+
+def burst(pre, y, sr, g, floor_db):
+    """Cough / throat-clear (separate from the sniff rule, band-independent): sudden onset (level rises >= burst_onset_db
+    within burst_onset_ms, starting within burst_floor_db of the noise floor; `pre` = the samples just before the island)
+    AND unstable pitch (median frame voicing < burst_voicing_max, or median frame-to-frame f0 jump > burst_jump_max).
+    -> feature dict with 'burst' bool."""
+    db = frame_db(np.concatenate([pre, y]), sr); k = max(1, int(round(g.get("burst_onset_ms", 40) / 10)))
+    near = floor_db + g.get("burst_floor_db", 10.0); rise = 0.0
+    for j in range(k, len(db)):
+        lo = db[j - k:j].min()
+        if lo <= near: rise = max(rise, db[j] - lo)
+    ft = f0_track(y, sr); ldb = frame_db(y, sr, 0.02)[:len(ft)]
+    loud = [ft[i] for i in range(len(ft)) if ldb[i] > ldb.max() - 20] if len(ft) else []
+    med_r = float(np.median([q for _, q in loud])) if loud else 0.0
+    fs = [f for f, _ in loud]
+    jump = float(np.median([abs(b - a) / a for a, b in zip(fs, fs[1:]) if a > 0])) if len(fs) > 1 else 1.0
+    ok = rise >= g.get("burst_onset_db", 30.0) and (med_r < g.get("burst_voicing_max", 0.5) or jump > g.get("burst_jump_max", 0.15))
+    return {"onset_rise_db": r(rise, 1), "median_voicing": r(med_r, 2), "f0_jump": r(jump, 2), "burst": bool(ok)}
 
 
 def overl(a0, a1, b0, b1):
@@ -192,6 +225,13 @@ def speech_regions(s, vad, words, cands, laughs, read, sr, g, floor_db=None):
     ufrac, smax = g.get("island_unvoiced_frac", 0.6), g.get("island_sniff_max_s", 1.0)
     wkeep, wtol = g.get("word_end_keep_s", 0.2), g.get("word_end_tol_s", 0.15)
     sp, trans, voiced, cuts, protect = list(keep), [], [], [], []
+    bmax, bgap = g.get("burst_max_s", 0.6), g.get("burst_gap_s", 0.2)
+    # aligned word tokens (not smeared ones) that substantially cover an island -> it is a word (うん/あー/確かに), never a burst
+    wl = g.get("burst_word_max_s", 1.5)
+    toks = [(w["start"], w["end"]) for seg in words.get(s, []) if seg.get("status") != "rejected"
+            for w in seg.get("words", []) if w.get("start") is not None and w.get("end") is not None and w["end"] - w["start"] <= wl]
+    has_tok = lambda a, b: any(overl(a, b, x, y) >= 0.5 * min(y - x, b - a) > 0 for x, y in toks)
+    last_voiced = -1e9
     for a, b in isl:
         if any(overl(a, b, x, y) > 0 for x, y in keep):
             sp.append((a, b)); voiced.append((a, b)); continue
@@ -203,9 +243,16 @@ def speech_regions(s, vad, words, cands, laughs, read, sr, g, floor_db=None):
             c = classify(y, sr, g)
         elif b - a <= smax and unv >= ufrac and any(w["transient"] and w["db"] > thr for w in ws):
             c = classify(y, sr, g); c["transient"] = True
+        if c is None or not c["transient"]:
+            if g.get("burst_enabled", True) and not firm and b - a <= bmax and a - last_voiced >= bgap \
+                    and not has_tok(a, b) and voicing(y, sr) < g.get("burst_island_voicing_max", 0.6):
+                bc = burst(read(max(0.0, a - 0.1), a), y, sr, g, floor_db)
+                if bc["burst"]:
+                    trans.append({"start": r(a), "end": r(b), "kind": "burst", "unvoiced_frac": r(unv, 2), **classify(y, sr, g), **bc})
+                    continue
         if c is not None and c["transient"]:
             trans.append({"start": r(a), "end": r(b), "kind": "island", "unvoiced_frac": r(unv, 2), **c}); continue
-        sp.append((a, b)); voiced.append((a, b))
+        sp.append((a, b)); voiced.append((a, b)); last_voiced = b
         word_end = any(abs(b - we) <= wtol for _, we in txt)
         if word_end:
             protect.append((b, b + wkeep))
@@ -216,7 +263,7 @@ def speech_regions(s, vad, words, cands, laughs, read, sr, g, floor_db=None):
                 cuts.append((c0, c1))
     pb, pa = g["pad_before_ms"] / 1000, g["pad_after_ms"] / 1000
     padded = merge([(max(0.0, a - pb), b + pa) for a, b in sp], g["merge_gap_ms"] / 1000)
-    padded = subtract(padded, [(t["start"], t["end"]) for t in trans if t["kind"] == "island"
+    padded = subtract(padded, [(t["start"], t["end"]) for t in trans if t["kind"] in ("island", "burst")
                                and not any(overl(t["start"], t["end"], p, q) > 0 for p, q in sp)])
     firm_iv = merge(subtract([list(v) for v in voiced], cuts) + [[max(0.0, a - pb), b + pa] for a, b in keep]
                     + [list(p) for p in protect], 0.0)
@@ -324,7 +371,7 @@ def main():
         after = bursts(y, sr, regs[s], g)
         sf.write(str(out / f"{s}.wav"), y, sr, subtype="FLOAT"); del y
         log["tracks"][s] = {"speech_s": r(sum(b - a for a, b in regs[s]), 1), "gated_s": r(dur - sum(b - a for a, b in regs[s]), 1),
-                            "transients_classified": len(trans[s]), "transients_subwindow": sum(t.get("kind") == "subwindow" for t in trans[s]), "transients_edge": sum(t.get("kind") == "edge" for t in trans[s]), "transients_inner": sum(t.get("kind") == "inner" for t in trans[s]), "nonspeech_bursts_before": before, "nonspeech_bursts_after": after,
+                            "transients_classified": len(trans[s]), "transients_subwindow": sum(t.get("kind") == "subwindow" for t in trans[s]), "transients_edge": sum(t.get("kind") == "edge" for t in trans[s]), "transients_inner": sum(t.get("kind") == "inner" for t in trans[s]), "transients_burst": sum(t.get("kind") == "burst" for t in trans[s]), "nonspeech_bursts_before": before, "nonspeech_bursts_after": after,
                             "roomtone_fill_s": r(filled, 1)}
     log["nonspeech_bursts_before"] = sum(v["nonspeech_bursts_before"] for v in log["tracks"].values())
     log["nonspeech_bursts_after"] = sum(v["nonspeech_bursts_after"] for v in log["tracks"].values())

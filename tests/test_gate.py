@@ -188,3 +188,35 @@ def test_real_20261026_host_ne_decay_kept_and_sniffs_muted():
     assert any(a <= 39.2 and b >= 39.45 for a, b in reg)        # 「ね」 decay kept
     assert not overl_any(reg, 26.53, 26.81)                     # sniff (edited ~0:15) muted
     assert not overl_any(reg, 40.6, 41.3)                       # sniff after 「続けてるわけですね」 muted
+
+
+def _real_cfg(spk, t0, t1, floor):
+    import json, os, pytest, yaml
+    sf = pytest.importorskip("soundfile")
+    p = f"{EP}/work/level/{spk}.wav"
+    if not os.path.exists(p):
+        pytest.skip("20261026 episode data not available")
+    cfg = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), "..", "config.yaml")))["gate"]
+    sr = sf.info(p).samplerate
+    x = sf.read(p, start=int(t0 * sr), stop=int(t1 * sr), dtype="float64")[0]
+    if x.ndim > 1: x = x.mean(1)
+    rd = lambda a, b: x[max(0, int((a - t0) * sr)):max(0, int((b - t0) * sr))]
+    vad = {"speakers": {spk: [v for v in json.load(open(f"{EP}/work/vad.json"))["speakers"][spk] if t0 < v[0] and v[1] < t1]}}
+    words = {spk: [w for w in json.load(open(f"{EP}/work/words.json"))[spk] if t0 < w["start"] and w["end"] < t1]}
+    return G.speech_regions(spk, vad, words, [], [], rd, sr, cfg, floor)
+
+
+def test_real_20261026_host_throat_clear_burst_muted():
+    reg, tr = _real_cfg("host", 330, 350, -106.6)
+    assert not overl_any(reg, 342.40, 342.69)
+    assert any(t.get("kind") == "burst" and t["start"] <= 342.5 <= t["end"] for t in tr)
+
+
+def test_real_20261026_host_ne_decay_kept_with_burst_rule():
+    reg, tr = _real_cfg("host", 15, 45, -106.6)
+    assert any(a <= 39.2 and b >= 39.45 for a, b in reg)
+
+
+def test_real_20261026_guest_a_hum_kept_by_burst_rule():
+    reg, tr = _real_cfg("guest_a", 330, 350, -86.1)
+    assert any(a <= 341.63 and b >= 342.27 for a, b in reg)
