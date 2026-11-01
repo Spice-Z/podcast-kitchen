@@ -71,6 +71,14 @@ def duck(x, s, e, db, fade):
     return x * g
 
 
+def write_dual_mono(path, mono, sr, block=1 << 20):
+    import soundfile as sf
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with sf.SoundFile(str(path), "w", sr, 2, "FLOAT") as f:
+        for i in range(0, len(mono), block):
+            b = mono[i:i + block]; f.write(np.stack([b, b], axis=1))
+
+
 def merge(iv):
     out = []
     for s, e, ids in sorted(iv):
@@ -157,14 +165,17 @@ def main():
             if s1 - s0 > 2 * cf:
                 raw_cuts.append((s0, s1, [e["id"]]))
     cuts = merge(raw_cuts)
+    del mix, energy
     out, spans, joins = apply_cuts(tracks, cuts, sr, cf)
+    tracks.clear()  # memory: raw tracks no longer needed (full episodes OOM otherwise)
+    n_out = len(next(iter(out.values())))
+    mono = np.zeros(n_out)
     for s in spk:
-        write_wav(ep / "work/render" / f"{s}.wav", out[s], sr)
-    mono = sum(out.values())
-    write_wav(ep / "work/mix.wav", np.stack([mono, mono], axis=1), sr)  # dual mono: loudness measured as delivered
+        write_wav(ep / "work/render" / f"{s}.wav", out[s], sr); mono += out[s]; out[s] = None
+    write_dual_mono(ep / "work/mix.wav", mono, sr)  # dual mono: loudness measured as delivered
     removed = sum(e - s for s, e, _ in cuts) / sr
     dump(ep / "work/timemap.json", {"sr": sr, "spans": spans, "joins": joins, "raw_duration_s": r(n / sr, 6),
-                                     "edited_duration_s": r(len(next(iter(out.values()))) / sr, 6), "removed_s": r(removed, 3),
+                                     "edited_duration_s": r(n_out / sr, 6), "removed_s": r(removed, 3),
                                      "roomtone_at_s": {s: r(tones[s][1]) for s in spk}})
     log_step(ep, "render", {"applied": len(applied), "timeline_cuts": len(cuts), "removed_s": r(removed)})
     print("render", {"applied": len(applied), "timeline_cuts": len(cuts), "removed_s": r(removed)})
