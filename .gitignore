@@ -1,6 +1,8 @@
-.venv*/
-*.wav
-*.mp3
 *.m4a
-models/
+*.mp3
+*.pyc
+*.wav
+.pytest_cache/
+.venv*/
 __pycache__/
+models/
