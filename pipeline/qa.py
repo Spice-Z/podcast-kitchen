@@ -61,7 +61,7 @@ def main():
         if q.get("write_clips"): write_wav(ep / "work/qa" / f"cut_{n:03d}.wav", x[s0:s1], sr, subtype="PCM_24")
         ratio, mx = click_score(x, i, sr)
         fr = int(0.05 * sr)
-        lv = lambda y: 10 * np.log10(np.mean(y ** 2) + 1e-12)
+        lv = lambda y: 10 * np.log10(np.mean(y ** 2) + 1e-12) if len(y) else 0.0
         jump = abs(lv(x[i - fr:i]) - lv(x[i:i + fr]))
         click = ratio > q["click_ratio"] and mx > q["click_min_abs"]
         joins.append({"n": n, "out_s": jn["out_s"], "ids": jn["ids"], "click_ratio": r(ratio, 2), "max_step": r(mx, 4),

@@ -111,7 +111,7 @@ candidates:
   false_start_window_s: 3
   false_start_min_kana: 3
   crosstalk_min_overlap_s: 2
-  protect_head_tail_s: 30
+  protect_head_tail_s: 3        # only the clean start/end; opening_chatter handles the intro
   laugh_protect_s: 2.0
   context_s: 3
   auto_decide:                  # review -> keep (never -> cut) for low-information items; keeps the human list short
@@ -149,7 +149,7 @@ qa:
   click_min_abs: 0.02           # and absolute floor (full scale)
   level_jump_db: 6              # flagged (not failing): RMS 50 ms either side of join
   head_tail_s: 30
-  head_tail_max_silence_s: 1.0
+  head_tail_max_silence_s: 1.5   # interior gaps in first/last head_tail_s; = long_pause.between_speakers_min_s (shorter gaps are natural turn-taking)
   edge_max_silence_s: 0.5       # leading/trailing silence on the MP3
   write_clips: false            # per-join WAV clips in work/qa (debug only)
 
