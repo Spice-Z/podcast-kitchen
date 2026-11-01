@@ -168,6 +168,7 @@ qa:
   clip_s: 2.0                   # same length for every exported cut clip
   click_ratio: 8.0              # |diff| at join vs local median |diff| (x)
   click_min_abs: 0.02           # and absolute floor (full scale)
+  click_ratio_bgm: 2.5          # joins under the ending BGM: step vs local 99.9th pct |diff| (music attacks aren't clicks)
   level_jump_db: 6              # flagged (not failing): RMS 50 ms either side of join
   head_tail_s: 30
   head_tail_max_silence_s: 1.5   # interior gaps in first/last head_tail_s; = long_pause.between_speakers_min_s (shorter gaps are natural turn-taking)

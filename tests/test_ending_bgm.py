@@ -94,3 +94,13 @@ def test_main_skips_cleanly(tmp_path, monkeypatch, capsys, kw, reason):
     log = json.loads((ep / "logs/ending_bgm.json").read_text())
     assert not log["applied"] and reason in log["reason"] and "WARNING" in capsys.readouterr().err
     assert frames(ep / "work/mix.wav") == n                 # voice mix passed through unchanged
+
+
+def test_qa_bed_click_score_separates_music_from_click():
+    from qa import click_score, click_score_bed
+    rs = np.random.default_rng(1); t = np.arange(SR * 2) / SR
+    music = 0.2 * np.sin(2 * np.pi * 440 * t) * (1 + 0.5 * np.sign(np.sin(2 * np.pi * 4 * t))) + 0.01 * rs.standard_normal(len(t))
+    i = SR
+    assert click_score_bed(music, i, SR) < 2.5
+    clicked = music.copy(); clicked[i:] += 0.3
+    assert click_score_bed(clicked, i, SR) > 2.5

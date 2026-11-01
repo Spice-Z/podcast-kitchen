@@ -25,6 +25,14 @@ def click_score(x, i, sr):
     return float(near.max()) / max(med, 1e-9), float(near.max())
 
 
+def click_score_bed(x, i, sr):
+    """join step vs the 99.9th pct |diff| over +-0.5 s: under a music bed the median is no baseline (beats/attacks)."""
+    d = np.abs(np.diff(x)); j = int(0.002 * sr); w = int(0.5 * sr)
+    near = d[max(0, i - j):i + j]
+    ctx = np.concatenate([d[max(0, i - w):max(0, i - j)], d[i + j:i + w]])
+    return float(near.max()) / max(float(np.percentile(ctx, 99.9)) if len(ctx) else 1e-9, 1e-9)
+
+
 def longest_silence(x, sr, thr_db=-50):
     fr = int(0.01 * sr); n = len(x) // fr
     db = 10 * np.log10(np.mean(x[: n * fr].reshape(n, fr) ** 2, axis=1) + 1e-12)
@@ -54,7 +62,7 @@ def main():
     subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(ep / "out" / f"{slug}.mp3"), "-ac", "1", "-c:a", "pcm_f32le", str(tmp)], check=True)
     x, sr = read_wav(tmp); tmp.unlink(); x = x[:, 0] if x.ndim > 1 else x
     tm = load(ep / "work/timemap.json"); half = q["clip_s"] / 2
-    joins = []
+    joins = []; bgm = tm.get("ending_bgm") if (tm.get("ending_bgm") or {}).get("applied") else None
     for n, jn in enumerate(tm["joins"]):
         i = int(jn["out_s"] * sr)
         s0, s1 = max(0, i - int(half * sr)), min(len(x), i + int(half * sr))
@@ -64,6 +72,8 @@ def main():
         lv = lambda y: 10 * np.log10(np.mean(y ** 2) + 1e-12) if len(y) else 0.0
         jump = abs(lv(x[i - fr:i]) - lv(x[i:i + fr]))
         click = ratio > q["click_ratio"] and mx > q["click_min_abs"]
+        if click and bgm and bgm["fade_in_start_s"] <= jn["out_s"] <= bgm["end_s"]:   # under the ending BGM bed
+            ratio = click_score_bed(x, i, sr); click = ratio > q.get("click_ratio_bgm", 2.5)
         joins.append({"n": n, "out_s": jn["out_s"], "ids": jn["ids"], "click_ratio": r(ratio, 2), "max_step": r(mx, 4),
                       "click": bool(click), "level_jump_db": r(jump, 1), "level_jump_flag": bool(jump > q["level_jump_db"])})
         if click: fails.append(f"click@{jn['out_s']}")
