@@ -109,7 +109,6 @@ def main():
         res["jingle"] = jg
     res["sync"] = load(ep / "logs/sync.json")
     res["fails"] = fails; res["pass"] = not fails
-    dump(ep / "logs/qa.json", res)
     md = [f"# QA {slug}: {'PASS' if not fails else 'FAIL'}", ""]
     for k in ("loudness_mp3",):
         v = res[k]; md.append(f"- {k}: {v['lufs']} LUFS, {v['true_peak_dbtp']} dBTP -> {'pass' if v['pass'] else 'FAIL'}")
@@ -125,6 +124,10 @@ def main():
     md.append(f"- edits: {res['edits']}")
     md.append(f"- removed total: {tm['removed_s']} s; chapters: {len(ch)}")
     md.append(f"- review items pending: {sum(1 for e in edits if e['action']=='review' or not e['approved'] and e['action']!='keep')}")
+    import show_notes as SN
+    pk = SN.package(ep); res["handoff"] = pk
+    md.append(f"- handoff package: missing {pk['missing'] or 'none'} (show notes copied to out/: {pk['notes_copied']}); default publish {pk['publish_at_jst']} = {pk['publish_at_pt']}")
+    dump(ep / "logs/qa.json", res)
     (ep / "logs/qa.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))
     raise SystemExit(1 if fails else 0)
