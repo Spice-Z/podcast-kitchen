@@ -10,16 +10,18 @@ cfg() { python3 -c "import yaml,sys;print(yaml.safe_load(open('$HERE/config.yaml
 DFN=${VENV_DFN:-$(cfg venv_dfn_asr)}/bin/python
 MAIN=${VENV_MAIN:-$(cfg venv_main)}/bin/python
 step() { echo "== $1"; shift; "$@"; }
+# resumable: skip an expensive stage when its final output exists (RESUME=0 forces a rerun)
+rstep() { local out=$EP/$2; if [ "${RESUME:-1}" = 1 ] && [ -e "$out" ]; then echo "== $1 (skip: $2 exists)"; else step "$1" "${@:3}"; fi; }
 case $PHASE in
   prep)
-    step ingest      $MAIN $P/ingest.py --ep "$EP" "$@"
-    step sync        $MAIN $P/sync.py --ep "$EP"
-    step clean_dfn   $DFN  $P/clean_dfn.py --ep "$EP"
-    step clean_dyn   $MAIN $P/clean_dynamics.py --ep "$EP"
-    step level       $MAIN $P/level.py --ep "$EP"
-    step vad         $MAIN $P/vad.py --ep "$EP"
-    step asr         $DFN  $P/asr.py --ep "$EP"
-    step align_kana  $MAIN $P/align_kana.py --ep "$EP"
+    rstep ingest manifest.json      $MAIN $P/ingest.py --ep "$EP" "$@"
+    rstep sync logs/sync.json        $MAIN $P/sync.py --ep "$EP"
+    rstep clean_dfn logs/env_dfn.json   $DFN  $P/clean_dfn.py --ep "$EP"
+    rstep clean_dyn work/clean/.done   $MAIN $P/clean_dynamics.py --ep "$EP"
+    rstep level logs/level.json       $MAIN $P/level.py --ep "$EP"
+    rstep vad work/vad.json         $MAIN $P/vad.py --ep "$EP"
+    rstep asr work/asr.json         $DFN  $P/asr.py --ep "$EP"
+    rstep align_kana work/words.json  $MAIN $P/align_kana.py --ep "$EP"
     step candidates  $MAIN $P/candidates.py --ep "$EP"
     step seed        $MAIN $P/label_store.py --ep "$EP" seed
     step build       $MAIN $P/label_store.py --ep "$EP" build

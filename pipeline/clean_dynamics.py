@@ -32,6 +32,7 @@ def main():
         y = Pedalboard([Compressor(threshold_db=cc["threshold_db"], ratio=cc["ratio"], attack_ms=cc["attack_ms"], release_ms=cc["release_ms"]),
                         Limiter(threshold_db=lc["threshold_db"], release_ms=lc["release_ms"])])(x.astype(np.float32)[None], sr)[0]
         write_wav(ep / "work/clean" / f"{s}.wav", y.astype(np.float64), sr)
+    (ep / "work/clean/.done").write_text("ok\n")
     log_step(ep, "clean_dynamics", {})
     print("dynamics ok")
 
