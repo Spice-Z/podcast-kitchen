@@ -1,6 +1,6 @@
 """Step 5a: mid-show jingle, inserted exactly ONCE (render stage: after render cuts, before ending_bgm/loudness).
 Placement (edited time): a pause between sentences = a gap in the union of all speakers' VAD islands (>= jingle.min_gap_s,
-not covered by any transcript segment, no backchannel/laugh within jingle.avoid_margin_s, outside the first
+not covered by any transcript segment, trailing laughter/aizuchi waited out (jingle.max_tail_s), outside the first
 jingle.min_start_s and the last jingle.exclude_end_s / the ending-BGM search window).
  1) chapter boundaries (chapters_raw.json, mapped through the timemap; the opening chapter is ignored): the boundary
     closest to the episode midpoint wins; the insertion gap is the qualifying gap nearest it within
@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from common import dump, load, load_cfg, log_step, r, speakers
 
-DEF = {"enabled": True, "prefer_range_frac": [0.3, 0.7], "widen_step_frac": 0.1, "file": "../../assets/jingle.mp3", "pre_silence_s": 0.4, "post_silence_s": 0.2, "gain_db": -2.0,
+DEF = {"enabled": True, "prefer_range_frac": [0.3, 0.7], "widen_step_frac": 0.1, "max_tail_s": 4.0, "speaker_change_bonus_s": 0.3, "react_max_s": 1.0, "file": "../../assets/jingle.mp3", "pre_silence_s": 0.4, "post_silence_s": 0.2, "gain_db": -2.0,
        "voice_ref_window_s": 60.0, "min_gap_s": 0.35, "min_start_s": 120.0, "exclude_end_s": 180.0, "chapter_before_s": 20.0,
        "chapter_after_s": 5.0, "avoid_margin_s": 1.0, "edge_fade_ms": 10.0, "segment_tolerance_s": 0.3}
 
@@ -50,17 +50,31 @@ SENT_END = re.compile(r"(。|！|!|です|ます|でした|ました|ですね|�
 REPLY = re.compile(r"^(そう|うん|はい|ええ|なるほど|確かに|たしかに|いや)")   # next line answering/agreeing = same exchange
 
 
-def gaps(islands, segs, avoid, lo, hi, min_gap, margin, tol=0.3):
-    """qualifying gaps (start, end, speaker_change) in edited time. islands: [(a, b, speaker)]; segs: [(a, b)] transcript
-    segments (a, b[, text]); a segment running more than `tol` past both gap edges = mid-sentence (ASR timing overhangs
-    VAD by ~0.1 s, so plain overlap is not enough), and when texts are given the last segment ending before the gap
-    must end a sentence (SENT_END; not a question — the answer belongs with it) and the first segment after it must not be
-    a reply/agreement (REPLY); avoid: [(a, b)] laughs/backchannels."""
-    isl = sorted(islands); u = merge([(a, b) for a, b, _ in isl]); out = []
-    for (a0, a1), (b0, b1) in zip(u, u[1:]):
-        g0, g1 = a1, b0
-        if g1 - g0 < min_gap or g0 < lo or g1 > hi:
+def gaps(islands, segs, avoid, lo, hi, min_gap, margin, tol=0.3, reactions=(), max_tail_s=4.0, react_max_s=1.0):
+    """qualifying insertion gaps (start, end, speaker_change, tail_s) in edited time.
+    islands: [(a, b, speaker)] VAD; segs: [(a, b[, text])] substantive transcript segments (no laughs/aizuchi);
+    reactions: [(a, b)] laughter / backchannels / short reactions; avoid: [(a, b)] overlaps (rejected within margin).
+    Candidate = end of substantive speech at a sentence end (SENT_END, not a question; next substantive line not a
+    reply, REPLY; no segment running through, `tol` for ASR overhang). An island is a reaction if half of it lies in
+    `reactions`, or it is <= react_max_s with no substantive segment on it. The insertion point waits out the reaction
+    tail on any track until all tracks are quiet for >= min_gap (tail <= max_tail_s); if substantive speech starts
+    first, the candidate is rejected. Nothing is cut."""
+    isl = sorted(islands); rx = merge(list(reactions))
+    def inter(a, b, iv):
+        return sum(max(0.0, min(b, y) - max(a, x)) for x, y in iv)
+    def is_react(a, b):
+        if inter(a, b, rx) >= 0.5 * (b - a):
+            return True
+        return b - a <= react_max_s and not any(sg[0] < b - 0.05 and sg[1] > a + 0.05 for sg in segs)
+    sub = [x for x in isl if not is_react(x[0], x[1])]
+    us = merge([(a, b) for a, b, _ in sub]); ua = merge([(a, b) for a, b, _ in isl]); out = []
+    for (a0, s_end), (n0, n1) in zip(us, us[1:]):
+        if s_end < lo or s_end > hi:
             continue
+        hole = next(((x1, y0) for (_, x1), (y0, _) in zip(ua, ua[1:]) if x1 >= s_end - 1e-6 and y0 - x1 >= min_gap), None)
+        if hole is None or hole[0] - s_end > max_tail_s or hole[1] > n0 + 1e-6 or hole[1] > hi:
+            continue                                   # tail too long, or new substantive speech before a clean pause
+        g0, g1 = hole
         if any(sg[0] < g0 - tol and sg[1] > g1 + tol for sg in segs):
             continue
         prev = [sg for sg in segs if len(sg) > 2 and sg[1] <= g0 + tol]
@@ -71,9 +85,9 @@ def gaps(islands, segs, avoid, lo, hi, min_gap, margin, tol=0.3):
             continue
         if any(s < g1 + margin and e > g0 - margin for s, e in avoid):
             continue
-        before = max((x for x in isl if x[1] <= g0 + 1e-6), key=lambda x: x[1])[2]
-        after = min((x for x in isl if x[0] >= g1 - 1e-6), key=lambda x: x[0])[2]
-        out.append((g0, g1, before != after))
+        before = max((x for x in sub if x[1] <= s_end + 1e-6), key=lambda x: x[1])[2]
+        after = min((x for x in sub if x[0] >= n0 - 1e-6), key=lambda x: x[0])[2]
+        out.append((g0, g1, before != after, round(g0 - s_end, 3)))
     return out
 
 
@@ -110,8 +124,7 @@ def choose_in(gs, chapters, dur, p):
             return g, f"chapter boundary at {c:.1f} s (closest to the episode midpoint with a clean sentence-end pause)"
     if not gs:
         return None, "no qualifying pause"
-    sc = [g for g in gs if g[2]] or gs
-    g = max(sc, key=lambda g: g[1] - g[0])
+    g = max(gs, key=lambda g: g[1] - g[0] + p.get("speaker_change_bonus_s", 0.3) * bool(g[2]))
     return g, "no usable chapter boundary: longest sentence-end pause" + (" with a speaker change" if g[2] else "")
 
 
@@ -162,11 +175,13 @@ def plan(ep, p, tm, dur):
     segs = [(m(g["start"]), m(g["end"]), g.get("text", "")) for s in speakers(ep) for g in words.get(s, [])
             if g.get("status") != "rejected" and not LAUGH_BC.match(g.get("text", "").strip())]
     edits = load(ep / "work/edits.json") if (ep / "work/edits.json").exists() else []
-    avoid = [(m(e["start"]), m(e["end"])) for e in edits if e["type"] in ("backchannel", "laugh", "overlap_yield", "overlap_restart")]
-    avoid += [(m(g["start"]), m(g["end"])) for s in speakers(ep) for g in words.get(s, []) if LAUGH_BC.match(g.get("text", "").strip())]
+    avoid = [(m(e["start"]), m(e["end"])) for e in edits if e["type"] in ("overlap_yield", "overlap_restart")]
+    react = [(m(e["start"]), m(e["end"])) for e in edits if e["type"] in ("backchannel", "laugh")]
+    react += [(m(g["start"]), m(g["end"])) for s in speakers(ep) for g in words.get(s, []) if LAUGH_BC.match(g.get("text", "").strip())]
     eb = (load_cfg(ep).get("ending_bgm") or {})
     hi = dur - max(p["exclude_end_s"], eb.get("search_window_s", 0) if eb.get("enabled") else 0)
-    gs = gaps(isl, segs, avoid, p["min_start_s"], hi, p["min_gap_s"], p["avoid_margin_s"], p["segment_tolerance_s"])
+    gs = gaps(isl, segs, avoid, p["min_start_s"], hi, p["min_gap_s"], p["avoid_margin_s"], p["segment_tolerance_s"],
+              react, p["max_tail_s"], p["react_max_s"])
     chs = []
     if (ep / "chapters_raw.json").exists():
         chs = [m(c["raw_s"]) for c in load(ep / "chapters_raw.json") if c["raw_s"] > 0]

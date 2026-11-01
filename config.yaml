@@ -139,6 +139,9 @@ render:
 jingle:                         # mid-show jingle, inserted ONCE (pipeline/jingle.py; after render, before ending_bgm)
   enabled: true
   prefer_range_frac: [0.3, 0.7]  # search this part of the edited show first (fractions of duration)
+  max_tail_s: 4.0               # wait out trailing laughter/aizuchi (any track) up to this long, then insert; new real speech first -> reject
+  speaker_change_bonus_s: 0.3   # fallback ranking: pause length + this if the speaker changes
+  react_max_s: 1.0              # VAD island this short with no real transcript line on it counts as a reaction
   widen_step_frac: 0.1          # nothing there -> widen both sides by this per step (min_start_s/exclude_end_s still apply)
   file: ../../assets/jingle.mp3 # absolute, or relative to the episode dir; audio is never committed to the repo
   pre_silence_s: 0.4            # last speech end -> this much digital silence -> jingle
@@ -150,7 +153,7 @@ jingle:                         # mid-show jingle, inserted ONCE (pipeline/jingl
   exclude_end_s: 180            # ... nor in the last stretch (also never inside ending_bgm.search_window_s)
   chapter_before_s: 20          # a chapter boundary (the one nearest the episode midpoint wins) uses the pause
   chapter_after_s: 5            #   nearest it within [-before, +after]; else the longest sentence-end pause (speaker change preferred)
-  avoid_margin_s: 1.0           # keep this far from laughs / backchannels / overlaps (edits + laugh-like transcript text)
+  avoid_margin_s: 1.0           # keep this far from overlaps (overlap_yield/restart edits) only; laughs/aizuchi are waited out (max_tail_s)
   segment_tolerance_s: 0.3      # a transcript segment running > this past both gap edges = mid-sentence (rejected)
   edge_fade_ms: 10              # fades on the voice either side of the insertion
 

@@ -36,9 +36,11 @@ def test_rejects_mid_sentence_question_reply_laugh_and_edges():
 
 
 def test_fallback_longest_pause_with_speaker_change():
-    gs = [(20.0, 20.6, False), (40.0, 40.9, True), (60.0, 62.0, False)]
+    gs = [(32.0, 32.6, False), (40.0, 40.9, True), (60.0, 61.1, False)]
     g, why = J.choose(gs, [], 100.0, P)
-    assert g == (40.0, 40.9, True) and "speaker change" in why
+    assert g == (40.0, 40.9, True) and "speaker change" in why      # 0.9 + 0.3 bonus > 1.1
+    g, _ = J.choose(gs + [(50.0, 51.5, False)], [], 100.0, P)
+    assert g[0] == 50.0                                              # a clearly longer pause still wins
     assert J.choose([], [], 100.0, P)[0] is None
 
 
@@ -131,3 +133,20 @@ def test_widens_stepwise_and_keeps_quality_within_tier():
     g, why = J.choose([(12.0, 13.0, True)], [], 100.0, p)      # only reachable at tier 3 (10-90)
     assert g[0] == 12.0 and "tier 3" in why
     assert [t[0] for t in J.tiers(100.0, p)] == [0, 1, 2, 3, 4]
+
+
+def test_waits_out_laughter_and_aizuchi_tail():
+    islands = isl((0, 20.0, "a"), (20.3, 20.9, "b"), (21.2, 22.0, "c"), (23.0, 40.0, "a"))   # b aizuchi, c laugh
+    segs = [(0, 20.0, "前の話でした。"), (23.0, 40.0, "次の話題に行きます")]
+    gs = J.gaps(islands, segs, [], 10, 35, 0.35, 0.5, 0.3, reactions=[(21.2, 22.0)], max_tail_s=4.0)
+    assert gs == [(22.0, 23.0, False, 2.0)]                    # inserted after the laugh, nothing cut
+
+
+def test_tail_into_new_speech_or_too_long_is_rejected():
+    islands = isl((0, 20.0, "a"), (20.3, 20.8, "b"), (20.9, 30.0, "b"))                        # b starts talking for real
+    segs = [(0, 20.0, "前の話でした。"), (20.9, 30.0, "それで次の話なんですが")]
+    assert J.gaps(islands, segs, [], 10, 35, 0.35, 0.5) == []
+    islands = isl((0, 20.0, "a"), (20.2, 25.5, "c"), (26.0, 40.0, "a"))                         # 5.5 s laugh
+    segs = [(0, 20.0, "前の話でした。"), (26.0, 40.0, "次の話題に行きます")]
+    assert J.gaps(islands, segs, [], 10, 35, 0.35, 0.5, 0.3, reactions=[(20.2, 25.5)], max_tail_s=4.0) == []
+    assert J.gaps(islands, segs, [], 10, 35, 0.35, 0.5, 0.3, reactions=[(20.2, 25.5)], max_tail_s=6.0)[0][:2] == (25.5, 26.0)
