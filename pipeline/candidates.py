@@ -118,6 +118,8 @@ def fillers(ctx):
                     act, why = "review", "filler in protected head/tail or near laugh"
                 elif ctx.others(s, t0, t1) > 0:
                     out.append(cand(ctx, "filler", s, t0, t1, "mute", f"filler '{w['surface']}' over other speech -> mute own track", w["score"])); continue
+                elif speech(ctx.vad["speakers"][s], t1, t1 + iso) >= iso - 1e-6:
+                    out.append(cand(ctx, "filler", s, t0, t1, "mute", f"filler '{w['surface']}' runs straight into speech (VAD) -> mute, a cut would click", w["score"])); continue
                 else:
                     act, why = "cut", f"isolated filler '{w['surface']}' ({w['pos']})"
                 out.append(cand(ctx, "filler", TIMELINE if act == "cut" else s, t0, t1, act, why, w["score"] or 0))
