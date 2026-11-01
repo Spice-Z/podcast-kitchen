@@ -44,9 +44,43 @@ def flatness(y):
     return float(np.exp(np.mean(np.log(p))) / np.mean(p))
 
 
+def highband(y, sr, hz=2000.0):
+    """(share of spectral energy above hz, spectral centroid Hz)."""
+    if len(y) < 16 or not np.any(y):
+        return 0.0, 0.0
+    p = np.abs(np.fft.rfft(y * np.hanning(len(y)))) ** 2 + 1e-20; f = np.fft.rfftfreq(len(y), 1 / sr)
+    return float(p[f > hz].sum() / p.sum()), float((p * f).sum() / p.sum())
+
+
 def classify(y, sr, g):
-    v, fl = voicing(y, sr), flatness(y)
-    return {"voicing": r(v, 3), "flatness": r(fl, 4), "transient": bool(v < g["voicing_max"] or fl > g["flatness_min"])}
+    """Sniff/cough/throat-clear = low periodicity AND noise-like high-band energy (share above 2 kHz > hb_share_min,
+    or centroid > centroid_min_hz, or flatness > flatness_min). Breathy/creaky speech decays are low-voicing but
+    low-band, so they are not transients."""
+    v, fl = voicing(y, sr), flatness(y); hb, cen = highband(y, sr)
+    noisy = hb > g.get("hb_share_min", 0.4) or cen > g.get("centroid_min_hz", 2000) or fl > g["flatness_min"]
+    return {"voicing": r(v, 3), "flatness": r(fl, 4), "hb_share": r(hb, 3), "centroid_hz": r(cen, 0),
+            "transient": bool(v < g["voicing_max"] and noisy)}
+
+
+def windows(y, sr, g, step=0.1):
+    """Per-window features over y (step s): list of dict(voicing, transient, db)."""
+    n = max(1, int(round(len(y) / (step * sr)))); st = len(y) / n; out = []
+    for i in range(n):
+        w = y[int(i * st):int((i + 1) * st)]
+        c = classify(w, sr, g); c["db"] = float(10 * np.log10(np.mean(w ** 2) + 1e-12)) if len(w) else -120.0
+        c["voiced"] = c["voicing"] >= g["voicing_max"]; out.append(c)
+    return out
+
+
+def decaying(ws, i):
+    """True when window i is part of a level run that keeps falling (<= +1 dB per step) from the nearest voiced window
+    before it: a voiced decay (word-final vowel fading out), never muted."""
+    j = i
+    while j > 0 and not ws[j - 1]["voiced"]:
+        j -= 1
+    if j == 0:
+        return False
+    return all(ws[k]["db"] <= ws[k - 1]["db"] + 1.0 for k in range(j, i + 1))
 
 
 def overl(a0, a1, b0, b1):
@@ -101,73 +135,101 @@ def subtract(iv, cuts):
     return iv
 
 
-def edge_tails(y, sr, g, thr, t0):
-    """Unvoiced runs at the head/tail of a voiced VAD island (sniff or breath glued onto speech by VAD).
-    Steps of 50 ms from each edge inward while voicing < voicing_max and level > thr; a run >= edge_tail_min_s is
-    returned minus edge_keep_s next to the speech (protects unvoiced word-final consonants such as -su)."""
-    st = int(0.05 * sr); n = len(y) // st
-    vmin, keep = g.get("edge_tail_min_s", 0.2), g.get("edge_keep_s", 0.05)
-    def unv(i):
-        w = y[i * st:(i + 1) * st]
-        return 10 * np.log10(np.mean(w ** 2) + 1e-12) > thr and voicing(w, sr) < g["voicing_max"]
+def edge_tails(y, sr, g, thr, t0, keep_tail=None):
+    """Sniff/breath glued onto the head/tail of a voiced VAD island: steps of 50 ms from each edge inward while the step
+    is loud (> thr) AND a transient (low voicing + noise-like high band). A run >= edge_tail_min_s is returned minus
+    edge_keep_s next to the speech (keep_tail overrides the tail-side keep, e.g. word_end_keep_s). A tail run whose
+    level keeps falling from the voiced part is a voiced decay and is kept."""
+    ws = windows(y, sr, g, 0.05) if len(y) >= int(0.1 * sr) else []
+    n = len(ws); vmin, keep = g.get("edge_tail_min_s", 0.2), g.get("edge_keep_s", 0.05)
+    kt = keep if keep_tail is None else keep_tail
+    bad = lambda i: ws[i]["db"] > thr and ws[i]["transient"]
     out = []
     i = n - 1
-    while i >= 0 and unv(i): i -= 1
-    tail = (n - 1 - i) * 0.05
-    if tail >= vmin and i >= 0:
-        out.append((t0 + (i + 1) * 0.05 + keep, t0 + len(y) / sr))
+    while i >= 0 and bad(i): i -= 1
+    if (n - 1 - i) * 0.05 >= vmin and i >= 0 and not decaying(ws, n - 1):
+        c0 = t0 + (i + 1) * 0.05 + kt
+        if c0 < t0 + len(y) / sr: out.append((c0, t0 + len(y) / sr))
     j = 0
-    while j < n and unv(j): j += 1
+    while j < n and bad(j): j += 1
     if j * 0.05 >= vmin and j < n:
         out.append((t0, t0 + j * 0.05 - keep))
     return out
 
 
+def inner_windows(y, sr, g, thr, t0):
+    """Inside a voiced VAD island: 100 ms windows that are loud, transient (unvoiced + high-band), have no voiced window
+    within +-surround_s, and are not a voiced decay -> (start, end) cuts."""
+    ws = windows(y, sr, g, 0.1); st = len(y) / sr / max(1, len(ws)); k = max(1, int(round(g.get("surround_s", 0.1) / 0.1)))
+    out = []
+    for i, w in enumerate(ws):
+        if w["db"] <= thr or not w["transient"] or decaying(ws, i):
+            continue
+        if any(ws[j]["voiced"] for j in range(max(0, i - k), min(len(ws), i + k + 1)) if j != i):
+            continue
+        out.append((t0 + i * st, t0 + (i + 1) * st))
+    return merge(out, 0.0)
+
+
 def speech_regions(s, vad, words, cands, laughs, read, sr, g, floor_db=None):
     """-> (padded merged regions, transients list). read(a, b) returns the track samples for [a, b) seconds.
-    1. Word spans count only where they overlap own VAD islands (smear beyond VAD dropped); pads are anchored to VAD edges.
-    2. Short VAD islands (<= transient_max_s) without firm text/laugh/backchannel are classified; unvoiced -> transient.
-    3. Inside the padded regions, energy bursts outside voiced VAD islands (pad zones, merged gaps, smeared spans) are
-       classified per sub-window; unvoiced bursts are muted. Unvoiced runs >= edge_tail_min_s at the head/tail of a
-       voiced island (sniff glued onto speech) are muted too, keeping edge_keep_s next to the speech. Laughs and backchannels are never muted."""
+    Transient = low voicing AND noise-like high band (classify). Laughs and backchannels (and their pads) are exempt.
+    1. Word spans count only where they overlap own VAD islands (smear dropped); pads are anchored to VAD edges.
+    2. A word is firm support for an island only if it lies mostly inside it AND the island is not mostly unvoiced
+       (island_unvoiced_frac of 100 ms windows). Islands <= transient_max_s without firm text are classified whole;
+       islands <= island_sniff_max_s that are mostly unvoiced and contain a transient window are muted whole.
+    3. Inside every other island, 100 ms transient windows not surrounded by voiced speech are muted (inner_windows),
+       and sniffs glued to island edges are muted (edge_tails); voiced decays are kept.
+    4. Pad zones / merged gaps (inside regions, outside voiced VAD): energy bursts classified per sub-window; the first
+       word_end_keep_s after a VAD end adjacent to a word end (|VAD end - word end| <= word_end_tol_s) is never muted."""
     isl = [(a, b) for a, b in vad["speakers"][s]]
     txt = [(w["start"], w["end"]) for w in words.get(s, []) if w.get("status") != "rejected"]
     keep = [(c["start"], c["end"]) for c in cands if c["type"] == "backchannel" and c["track"] == s] + \
            [(a, b) for a, b, t in laughs if t == s]
-    sp, trans, voiced = list(keep), [], []
-    for a, b in isl:
-        protected = any(overl(a, b, x, y) > 0 for x, y in keep)
-        if b - a <= g["transient_max_s"] and not protected and not firm_text(a, b, txt):
-            c = classify(read(a, b), sr, g)
-            if c["transient"]:
-                trans.append({"start": r(a), "end": r(b), "kind": "island", **c}); continue
-        sp.append((a, b)); voiced.append((a, b))
-    # words with no VAD support at all are dropped (alignment smear / ASR hallucination); their VAD parts are already in sp
-    pb, pa = g["pad_before_ms"] / 1000, g["pad_after_ms"] / 1000
-    padded = merge([(max(0.0, a - pb), b + pa) for a, b in sp], g["merge_gap_ms"] / 1000)
-    # clip island transients back out where a neighbour's pad reaches them
-    padded = subtract(padded, [(t["start"], t["end"]) for t in trans
-                               if not any(overl(t["start"], t["end"], p, q) > 0 for p, q in sp)])
-    # sub-window transient detection in the parts of each region not covered by voiced VAD or laughs/backchannels
     if floor_db is None:
         floor_db = g["noise_floor_min_db"]
     thr = max(floor_db, g["noise_floor_min_db"]) + g["transient_rise_db"]
-    cuts = []
-    for a, b in voiced:
-        if b - a <= g["transient_max_s"] or any(overl(a, b, x, y) > 0 for x, y in keep): continue
-        for c0, c1 in edge_tails(read(a, b), sr, g, thr, a):
-            c = classify(read(c0, c1), sr, g)
-            trans.append({"start": r(c0), "end": r(c1), "kind": "edge", **c}); cuts.append((c0, c1))
-    firm = merge(subtract([list(v) for v in voiced], cuts) + [[max(0.0, a - pb), b + pa] for a, b in keep], 0.0)  # laughs/backchannels incl. their pads
+    ufrac, smax = g.get("island_unvoiced_frac", 0.6), g.get("island_sniff_max_s", 1.0)
+    wkeep, wtol = g.get("word_end_keep_s", 0.2), g.get("word_end_tol_s", 0.15)
+    sp, trans, voiced, cuts, protect = list(keep), [], [], [], []
+    for a, b in isl:
+        if any(overl(a, b, x, y) > 0 for x, y in keep):
+            sp.append((a, b)); voiced.append((a, b)); continue
+        y = read(a, b); ws = windows(y, sr, g, 0.1)
+        unv = float(np.mean([not w["voiced"] for w in ws])) if ws else 0.0
+        firm = firm_text(a, b, txt) and unv < ufrac
+        c = None
+        if b - a <= g["transient_max_s"] and not firm:
+            c = classify(y, sr, g)
+        elif b - a <= smax and unv >= ufrac and any(w["transient"] and w["db"] > thr for w in ws):
+            c = classify(y, sr, g); c["transient"] = True
+        if c is not None and c["transient"]:
+            trans.append({"start": r(a), "end": r(b), "kind": "island", "unvoiced_frac": r(unv, 2), **c}); continue
+        sp.append((a, b)); voiced.append((a, b))
+        word_end = any(abs(b - we) <= wtol for _, we in txt)
+        if word_end:
+            protect.append((b, b + wkeep))
+        if b - a > g["transient_max_s"]:
+            for c0, c1 in edge_tails(y, sr, g, thr, a, wkeep if word_end else None) + inner_windows(y, sr, g, thr, a):
+                cc = classify(read(c0, c1), sr, g)
+                trans.append({"start": r(c0), "end": r(c1), "kind": "edge" if c1 >= b - 1e-6 or c0 <= a + 1e-6 else "inner", **cc})
+                cuts.append((c0, c1))
+    pb, pa = g["pad_before_ms"] / 1000, g["pad_after_ms"] / 1000
+    padded = merge([(max(0.0, a - pb), b + pa) for a, b in sp], g["merge_gap_ms"] / 1000)
+    padded = subtract(padded, [(t["start"], t["end"]) for t in trans if t["kind"] == "island"
+                               and not any(overl(t["start"], t["end"], p, q) > 0 for p, q in sp)])
+    firm_iv = merge(subtract([list(v) for v in voiced], cuts) + [[max(0.0, a - pb), b + pa] for a, b in keep]
+                    + [list(p) for p in protect], 0.0)
+    sub = []
     for a, b in padded:
-        for x, y in subtract([[a, b]], firm):
+        for x, y in subtract([[a, b]], firm_iv):
             if y - x < 0.03: continue
             for h0, h1 in hot_runs(read(x, y), sr, thr, x):
                 c0, c1 = max(x, h0 - 0.02), min(y, h1 + 0.02)
                 c = classify(read(c0, c1), sr, g)
                 if c["transient"]:
-                    trans.append({"start": r(c0), "end": r(c1), "kind": "subwindow", **c}); cuts.append((c0, c1))
-    out = [c for c in subtract(padded, cuts) if c[1] - c[0] > 0.02]
+                    trans.append({"start": r(c0), "end": r(c1), "kind": "subwindow", **c}); sub.append((c0, c1))
+    out = [c for c in subtract(padded, cuts + sub) if c[1] - c[0] > 0.02]
     return out, trans
 
 
@@ -262,7 +324,7 @@ def main():
         after = bursts(y, sr, regs[s], g)
         sf.write(str(out / f"{s}.wav"), y, sr, subtype="FLOAT"); del y
         log["tracks"][s] = {"speech_s": r(sum(b - a for a, b in regs[s]), 1), "gated_s": r(dur - sum(b - a for a, b in regs[s]), 1),
-                            "transients_classified": len(trans[s]), "transients_subwindow": sum(t.get("kind") == "subwindow" for t in trans[s]), "transients_edge": sum(t.get("kind") == "edge" for t in trans[s]), "nonspeech_bursts_before": before, "nonspeech_bursts_after": after,
+                            "transients_classified": len(trans[s]), "transients_subwindow": sum(t.get("kind") == "subwindow" for t in trans[s]), "transients_edge": sum(t.get("kind") == "edge" for t in trans[s]), "transients_inner": sum(t.get("kind") == "inner" for t in trans[s]), "nonspeech_bursts_before": before, "nonspeech_bursts_after": after,
                             "roomtone_fill_s": r(filled, 1)}
     log["nonspeech_bursts_before"] = sum(v["nonspeech_bursts_before"] for v in log["tracks"].values())
     log["nonspeech_bursts_after"] = sum(v["nonspeech_bursts_after"] for v in log["tracks"].values())

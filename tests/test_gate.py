@@ -74,15 +74,18 @@ def overl_any(reg, a, b):
     return [1 for p, q in reg if G.overl(a, b, p, q) > 0]
 
 
-def test_sniff_in_pad_after_word_end_is_muted():
-    # regression 20261026 raw host 39.4-39.8: unvoiced tail after VAD/word end inside the post-pad
-    x = quiet(45); x[int(37.7 * SR):int(39.42 * SR)] = tone(1.72); x[int(39.45 * SR):int(39.75 * SR)] = noise(0.3)
+def test_sniff_in_pad_after_vad_end_is_muted_unless_word_final():
+    # sniff in the post-pad after a VAD end with no word ending there -> muted; at a word end the first
+    # word_end_keep_s is protected (20261026 raw 39.42: the 「ね」 tail, wrongly muted in v4)
+    x = quiet(45); x[int(37.7 * SR):int(39.42 * SR)] = tone(1.72); x[int(39.45 * SR):int(39.65 * SR)] = highband_noise(0.2)
     vad = {"speakers": {"a": [[37.7, 39.42]]}}
-    words = {"a": [{"start": 37.7, "end": 39.52, "text": "続けてるわけですね", "status": "ok"}]}
     rd = lambda a, b: x[int(a * SR):int(b * SR)]
-    reg, tr = G.speech_regions("a", vad, words, [], [], rd, SR, G_CFG, G.track_floor(x, SR))
-    assert not overl_any(reg, 39.47, 39.73)
-    assert any(a <= 37.7 and b >= 39.4 for a, b in reg)
+    w_mid = {"a": [{"start": 37.7, "end": 40.5, "text": "続けてるわけですね", "status": "ok"}]}
+    reg, tr = G.speech_regions("a", vad, w_mid, [], [], rd, SR, G_CFG, G.track_floor(x, SR))
+    assert not overl_any(reg, 39.47, 39.63) and any(a <= 37.7 and b >= 39.4 for a, b in reg)
+    w_end = {"a": [{"start": 37.7, "end": 39.52, "text": "続けてるわけですね", "status": "ok"}]}
+    reg, tr = G.speech_regions("a", vad, w_end, [], [], rd, SR, G_CFG, G.track_floor(x, SR))
+    assert any(a <= 39.42 and b >= 39.6 for a, b in reg)
 
 
 def test_sniff_glued_to_vad_island_tail_is_muted_but_short_consonant_kept():
@@ -112,3 +115,76 @@ def test_roomtone_window_is_burst_free():
     x[int(5 * SR):] += quiet(15, 6) * 2                     # slightly louder but clean region
     _, t0 = roomtone(x, SR, [], 2.0)
     assert not (t0 <= 2.1 and t0 + 2.0 >= 2.0)
+
+
+def lowband_noise(sec, seed=7):
+    n = noise(sec, seed); k = np.ones(24) / 24
+    return np.convolve(n, k, mode="same") * 4                 # ~< 700 Hz, unperiodic (breathy/creaky decay)
+
+
+def highband_noise(sec, seed=8):
+    n = noise(sec, seed)
+    return np.diff(np.diff(n, prepend=0), prepend=0) * 0.5    # energy mostly above 2 kHz (sniff)
+
+
+def test_classify_needs_low_voicing_and_high_band():
+    assert G.classify(highband_noise(0.2), SR, G_CFG)["transient"]
+    assert not G.classify(lowband_noise(0.2), SR, G_CFG)["transient"]   # unvoiced but low-band -> speech decay
+
+
+def test_breathy_word_end_decay_kept_synthetic():
+    # 20261026 raw host 39.2-39.45: 「ね」 fades out low-band with low periodicity, VAD end 39.42, word end 39.52
+    x = quiet(45); x[int(37.7 * SR):int(39.2 * SR)] = tone(1.5)
+    d = lowband_noise(0.25) * np.linspace(0.5, 0.01, int(0.25 * SR)); x[int(39.2 * SR):int(39.45 * SR)] = d
+    vad = {"speakers": {"a": [[37.7, 39.42]]}}
+    words = {"a": [{"start": 37.7, "end": 39.52, "text": "続けてるわけですね", "status": "ok"}]}
+    rd = lambda a, b: x[int(a * SR):int(b * SR)]
+    reg, tr = G.speech_regions("a", vad, words, [], [], rd, SR, G_CFG, G.track_floor(x, SR))
+    assert any(a <= 37.7 and b >= 39.42 for a, b in reg)
+
+
+def test_mostly_unvoiced_island_with_hallucinated_word_muted_synthetic():
+    # 20261026 raw host 40.61-41.31: ASR word 「ありがとうございました。」 over a sniff island (0.7 s > transient_max_s)
+    x = quiet(45); x[int(40.6 * SR):int(40.8 * SR)] = lowband_noise(0.2); x[int(41.0 * SR):int(41.3 * SR)] = highband_noise(0.3)
+    vad = {"speakers": {"a": [[40.61, 41.31]]}}
+    words = {"a": [{"start": 40.61, "end": 41.41, "text": "ありがとうございました。", "status": "ok"}]}
+    rd = lambda a, b: x[int(a * SR):int(b * SR)]
+    reg, tr = G.speech_regions("a", vad, words, [], [], rd, SR, G_CFG, G.track_floor(x, SR))
+    assert not overl_any(reg, 40.6, 41.3)
+
+
+def test_fricative_inside_speech_kept_but_isolated_sniff_window_muted():
+    x = quiet(10)
+    x[int(1 * SR):int(2 * SR)] = tone(1.0); x[int(2 * SR):int(2.1 * SR)] = highband_noise(0.1); x[int(2.1 * SR):int(3 * SR)] = tone(0.9)
+    x[int(4 * SR):int(5 * SR)] = tone(1.0); x[int(5.1 * SR):int(5.4 * SR)] = highband_noise(0.3); x[int(5.5 * SR):int(6.5 * SR)] = tone(1.0)
+    vad = {"speakers": {"a": [[1.0, 3.0], [4.0, 6.5]]}}
+    words = {"a": [{"start": 1.0, "end": 3.0, "text": "あさ", "status": "ok"}, {"start": 4.0, "end": 6.5, "text": "あい", "status": "ok"}]}
+    rd = lambda a, b: x[int(a * SR):int(b * SR)]
+    reg, tr = G.speech_regions("a", vad, words, [], [], rd, SR, G_CFG, G.track_floor(x, SR))
+    assert any(a <= 1.0 and b >= 3.0 for a, b in reg)                       # "s" between vowels kept
+    assert not overl_any(reg, 5.2, 5.3)                                       # isolated sniff inside the island muted
+
+
+EP = "/workspace/podcast/episodes/20261026"
+
+
+def _real():
+    import json, os, pytest
+    sf = pytest.importorskip("soundfile")
+    p = f"{EP}/work/level/host.wav"
+    if not os.path.exists(p):
+        pytest.skip("20261026 episode data not available")
+    sr = sf.info(p).samplerate
+    x = sf.read(p, start=15 * sr, stop=45 * sr, dtype="float64")[0]
+    if x.ndim > 1: x = x.mean(1)
+    rd = lambda a, b: x[max(0, int((a - 15) * sr)):max(0, int((b - 15) * sr))]
+    vad = {"speakers": {"host": [v for v in json.load(open(f"{EP}/work/vad.json"))["speakers"]["host"] if 15 < v[0] and v[1] < 45]}}
+    words = {"host": [w for w in json.load(open(f"{EP}/work/words.json"))["host"] if 15 < w["start"] and w["end"] < 45]}
+    return G.speech_regions("host", vad, words, [], [], rd, sr, G_CFG, -106.6)
+
+
+def test_real_20261026_host_ne_decay_kept_and_sniffs_muted():
+    reg, tr = _real()
+    assert any(a <= 39.2 and b >= 39.45 for a, b in reg)        # 「ね」 decay kept
+    assert not overl_any(reg, 26.53, 26.81)                     # sniff (edited ~0:15) muted
+    assert not overl_any(reg, 40.6, 41.3)                       # sniff after 「続けてるわけですね」 muted

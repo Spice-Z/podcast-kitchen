@@ -174,8 +174,15 @@ gate:                           # per-track speech gating after cleaning/levelli
   merge_gap_ms: 300
   fade_ms: 15                   # 10-20 ms
   transient_max_s: 0.6          # VAD islands up to this long without firm text (word mostly inside)/laugh/backchannel are checked
-  voicing_max: 0.35             # autocorr peak 80-400 Hz below this -> unvoiced -> transient (sniff/cough/throat-clear)
-  flatness_min: 0.3             # spectral flatness above this -> noise-like -> transient
+  voicing_max: 0.35             # autocorr peak 80-400 Hz below this -> unvoiced (transient only if also noise-like high band)
+  hb_share_min: 0.4             # transient also needs noise-like high band: energy share above 2 kHz > this ...
+  centroid_min_hz: 2000         # ... or spectral centroid above this (breathy/creaky word endings stay low-band -> kept)
+  island_unvoiced_frac: 0.6     # island with >= this share of unvoiced 100 ms windows: its words are not firm support
+  island_sniff_max_s: 1.0       # mostly-unvoiced islands up to this long with a transient window are muted whole
+  surround_s: 0.1               # inner 100 ms transient windows are muted only with no voiced window within this
+  word_end_keep_s: 0.2          # never mute this long after a VAD end that sits at a word end (also tail-side edge keep)
+  word_end_tol_s: 0.15          # |VAD end - word end| <= this -> word-final
+  flatness_min: 0.3             # spectral flatness above this -> noise-like
   edge_tail_min_s: 0.2          # unvoiced run at a voiced VAD island head/tail >= this -> muted (sniff glued to speech)
   edge_keep_s: 0.05             # kept next to the speech (word-final unvoiced consonants)
   fill_track: host              # room tone fill where every track is gated
