@@ -114,6 +114,10 @@ candidates:
   protect_head_tail_s: 30
   laugh_protect_s: 2.0
   context_s: 3
+  auto_decide:                  # review -> keep (never -> cut) for low-information items; keeps the human list short
+    enabled: true
+    keep_overlap_yield: true
+    min_conf: 0.5
 
 labels:
   # rule labels on these types are auto-approved; everything else needs approved: true

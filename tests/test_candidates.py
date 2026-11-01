@@ -33,14 +33,14 @@ def test_long_pause_before_laugh_goes_to_review(cfg):
     v = vad({"host": [[1, 5]], "guest_a": [[8, 12]]})
     w = {"host": [seg(1, 5, "オチです")], "guest_a": [seg(8, 12, "(笑)")]}
     lp = [c for c in C.build(v, w, cfg) if c["type"] == "long_pause"]
-    assert lp and all(c["default_action"] == "review" for c in lp)
+    assert lp and all(c["default_action"] in ("review", "keep") for c in lp)
 
 
 def test_overlap_yield_targets_only_yielder_never_auto_mutes(cfg):
     v = vad({"host": [[40.0, 41.0], [42.0, 42.8]], "guest_a": [[40.2, 48.0]]}, dur=120)
     w = {"host": [seg(40.0, 41.0, "それで僕が"), seg(42.0, 42.8, "どうぞどうぞ")], "guest_a": [seg(40.2, 48.0, "いやこれは長く続く話なんですけど")]}
     oy = [c for c in C.build(v, w, cfg) if c["type"] == "overlap_yield"]
-    assert len(oy) == 1 and oy[0]["track"] == "host" and oy[0]["default_action"] == "review"
+    assert len(oy) == 1 and oy[0]["track"] == "host" and oy[0]["default_action"] in ("review", "keep")
     assert all(c["track"] != "guest_a" for c in oy)
 
 
@@ -61,7 +61,7 @@ def test_keys_are_stable(cfg):
 def test_head_tail_protected_goes_to_review(cfg):
     v = vad({"host": [[10.0, 11.0]], "guest_a": [[10.2, 18.0]]}, dur=120)
     w = {"host": [seg(10.0, 11.0, "それで僕が")], "guest_a": [seg(10.2, 18.0, "いやこれは長く続く話なんですけど")]}
-    assert [c["default_action"] for c in C.build(v, w, cfg) if c["type"] == "overlap_yield"] == ["review"]
+    assert [c["default_action"] for c in C.build(v, w, cfg) if c["type"] == "overlap_yield"] in (["review"], ["keep"])
 
 
 def test_overlap_without_marker_or_mid_turn_not_muted(cfg):
@@ -72,7 +72,7 @@ def test_overlap_without_marker_or_mid_turn_not_muted(cfg):
     # turn start but no yield marker -> review, never mute
     v = vad({"guest_b": [[40.0, 41.0]], "guest_a": [[40.2, 48.0]]}, dur=120)
     w = {"guest_b": [seg(40.0, 41.0, "そうだと思う本当に")], "guest_a": [seg(40.2, 48.0, "結構それができるスキルって大事")]}
-    assert [c["default_action"] for c in C.build(v, w, cfg) if c["type"] == "overlap_yield"] == ["review"]
+    assert [c["default_action"] for c in C.build(v, w, cfg) if c["type"] == "overlap_yield"] in (["review"], ["keep"])
 
 
 
@@ -91,3 +91,11 @@ def test_false_start_immediate_restart_cut_parallel_structure_review(cfg):
     fs = {round(c["start"]): c["default_action"] for c in C.build(v, w, cfg) if c["type"] == "false_start"}
     assert fs.get(60) == "cut"
     assert fs.get(80) in (None, "review")
+
+
+def test_auto_decide_only_keeps():
+    cs = [{"type": "false_start", "default_action": "review", "reason": "repeated phrase (parallel structure?)", "confidence": 0.3},
+          {"type": "false_start", "default_action": "review", "reason": "immediate restart", "confidence": 0.5},
+          {"type": "filler", "default_action": "cut", "reason": "filler", "confidence": 0.9}]
+    out = C.auto_decide(cs, {"enabled": True})
+    assert [c["default_action"] for c in out] == ["keep", "review", "cut"]

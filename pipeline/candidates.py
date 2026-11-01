@@ -250,7 +250,31 @@ def build(vad, words, cfg):
     for c in sorted(cs, key=lambda c: (c["start"], c["type"], c["track"], c["end"])):
         if c["key"] not in seen:
             seen.add(c["key"]); out.append(c)
-    return out
+    return auto_decide(out, cfg["candidates"].get("auto_decide", {}))
+
+
+def auto_decide(cs, ad):
+    """Resolve low-information review items to `keep` (no edit) so the human list stays short.
+    Only ever review -> keep: an auto-decision can never cut meaning or a laugh."""
+    if not ad.get("enabled", False):
+        return cs
+    for c in cs:
+        if c["default_action"] != "review":
+            continue
+        r, why = c["reason"], None
+        if c["type"] == "overlap_yield" and ad.get("keep_overlap_yield", True):
+            why = "overlap left as recorded"
+        elif "could be laugh" in r:
+            why = "untranscribed sound, possibly laugh"
+        elif "alignment score low" in r and c["confidence"] < ad.get("min_conf", 0.5):
+            why = "weak alignment, not confident"
+        elif c["type"] == "false_start" and "parallel structure" in r:
+            why = "repetition with words between, likely rhetorical"
+        elif c["type"] == "long_pause" and "punchline" in r:
+            why = "pause before laugh/reaction kept for timing"
+        if why:
+            c["default_action"] = "keep"; c["reason"] = f"{r} [auto-keep: {why}]"
+    return cs
 
 
 def main():
