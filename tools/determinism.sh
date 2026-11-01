@@ -9,9 +9,9 @@ for r in a b; do
   "$HERE/run_pipeline.sh" "$ROOT/$r" prep "$@" > "$ROOT/$r.prep.log" 2>&1
   [ "$APPROVE" != "-" ] && $MAIN "$HERE/pipeline/label_store.py" --ep "$ROOT/$r" approve --types "$APPROVE" >> "$ROOT/$r.prep.log"
   "$HERE/run_pipeline.sh" "$ROOT/$r" finish > "$ROOT/$r.finish.log" 2>&1 || echo "finish exit $? (see $ROOT/$r.finish.log)"
-  (cd "$ROOT/$r" && find out work labels.json -type f ! -name '*.txt.tmp' | sort | xargs sha256sum) > "$ROOT/$r.sha"
+  $MAIN "$HERE/tools/hash_artifacts.py" "$ROOT/$r" > "$ROOT/$r.sha"
 done
-if diff <(cut -c1-64,66- "$ROOT/a.sha") <(cut -c1-64,66- "$ROOT/b.sha") > "$ROOT/diff.txt"; then
+if diff "$ROOT/a.sha" "$ROOT/b.sha" > "$ROOT/diff.txt"; then
   echo "DETERMINISTIC: $(wc -l < "$ROOT/a.sha") files identical"
 else
   echo "NONDETERMINISTIC:"; cat "$ROOT/diff.txt"; exit 1
