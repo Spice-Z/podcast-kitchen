@@ -28,3 +28,12 @@ def test_build_schema_and_review_never_approved(cfg):
     ed = L.build(CANDS, labels)
     assert set(ed[0]) == {"id", "key", "type", "track", "start", "end", "action", "approved", "labeler", "reason", "excerpt", "confidence", "note"}
     assert ed[2]["approved"] is False
+
+
+def test_manual_edits_appended(tmp_path):
+    import json
+    import label_store as LS
+    (tmp_path / "manual_edits.json").write_text(json.dumps([{"start": 10.0, "end": 12.5, "action": "cut", "approved": True, "note": "retake"},
+                                                           {"start": 20.0, "end": 21.0, "action": "review", "approved": True}]))
+    m = LS.manual(tmp_path)
+    assert [x["approved"] for x in m] == [True, False] and m[0]["type"] == "manual" and m[0]["track"] == "all"
