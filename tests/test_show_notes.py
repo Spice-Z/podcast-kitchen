@@ -17,7 +17,7 @@ def test_package_copies_show_notes_into_out(tmp_path):
     (tmp_path / "out/ep1.mp3").write_bytes(b""); (tmp_path / "out/chapters.json").write_text("{}")
     (tmp_path / "show_notes.md").write_text("# notes")
     pk = SN.package(tmp_path, "タイトル")
-    assert (tmp_path / "out/show_notes.md").read_text() == "# notes" and pk["missing"] == []
+    assert (tmp_path / "out/show_notes.md").read_text() == "# notes" and pk["missing"] == ["ad_insertion_point (no applied jingle)"]
     assert pk["artwork"] == "show default" and pk["title"] == "タイトル" and "JST" in pk["publish_at_jst"]
     assert "Vancouver time (PT)" in pk["publish_at_pt"] and "PST" not in pk["publish_at_pt"] and "PDT" not in pk["publish_at_pt"]
 

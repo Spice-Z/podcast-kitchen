@@ -35,7 +35,8 @@ def ad_point(ep, cfg_pre=0.4):
         pre = load_cfg(ep)["jingle"]["pre_silence_s"]
     except Exception:
         pre = cfg_pre
-    t = round(j["jingle_start_s"] - pre, 2)
+    from decimal import Decimal, ROUND_HALF_UP
+    t = float(Decimal(str(round(j["jingle_start_s"] - pre, 3))).quantize(Decimal("0.01"), ROUND_HALF_UP))
     return {"seconds": t, "mmss": mmss(t)}
 
 
