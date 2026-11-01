@@ -1,17 +1,10 @@
 ---
 name: podcast-02-align-mix
-description: >-
-  Use this as step 2 of a podcast edit: line up the per-speaker tracks and clean
-  each one (noise reduction, level) before mixing.
+description: Use this as step 2 of a podcast edit: check sync and clean each speaker track (DeepFilterNet3 denoise, pedalboard EQ/dynamics) with pinned settings.
 ---
-# Podcast step 2: align and clean tracks
-Input: `work/<speaker>.wav` from step 1.
-
-1. Alignment: Zencastr tracks start at the same time, so the default offset is 0. Check by cross-correlating the first 120 s of each track against the longest track (numpy/scipy, 8 kHz downsample). Apply the offset only if the correlation peak is clear and |offset| > 20 ms; otherwise keep 0. Save the offsets to `logs/align.json`.
-2. Per-track cleanup, applied in this fixed order:
-   `highpass=f=80, afftdn=nr=12:nf=-50, acompressor=threshold=-20dB:ratio=3:attack=5:release=100`
-3. Write `work/<speaker>_clean.wav` (48 kHz, 24-bit, mono).
-4. Mix: pan each speaker to center, `amix=inputs=N:normalize=0`, and write `work/mix_raw.wav` (stereo, 48 kHz).
-5. Save the exact ffmpeg commands to `logs/commands.sh`.
-
-Never change the filter values ad hoc. If a track needs something different, record the reason in `logs/notes.md` first.
+# Podcast step 2: sync and per-track cleanup
+1. **Sync:** cross-correlate the start and end of each track against the reference track. If drift is over 20 ms, correct it by resampling. Save `logs/align.json`.
+2. **Denoise:** run DeepFilterNet3 in its own Python 3.11 environment (torch 2.0.1 and torchaudio 2.0.2), with attenuation capped at 18 dB so laughs and breaths aren't damaged. Write `work/<spk>_dn.wav`.
+3. **EQ and dynamics** with pedalboard, using fixed settings from `config.yaml`: high-pass at 80 Hz, de-esser, compressor (threshold -20 dB, ratio 3), limiter.
+4. **Leveler:** match each speaker to -20 LUFS.
+5. Record package versions and model hashes in `logs/env.json`.
