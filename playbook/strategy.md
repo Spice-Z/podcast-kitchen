@@ -1,5 +1,7 @@
 # ITトリオ 編集方針メモ（2026-10-31）
 
+> **注意（v2）:** 本書は技術選定時の調査メモ。現行の仕様は [config.yaml](../config.yaml) と [editing-playbook.md](editing-playbook.md) が正。特に以下は置き換え済み: 長い間は `long_pause`（1.2 s / 1.5 s → 0.7 s）、ラウドネスは ffmpeg loudnorm 2パス linear のみ（TP -1.0）、チャプターは再ASRせず timemap 変換、相槌は `backchannel` を -20 dB duck、ブレス処理は未実装。
+
 ## 前提・環境
 - Box: 8 vCPU / RAM 15GB（空き約7.6GB）/ GPU なし / ディスク空き 34GB / Python 3.13, ffmpeg 7.1
 - 素材: Zencastr の話者別トラック（+ Zencastr 文字起こし）

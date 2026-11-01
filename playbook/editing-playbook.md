@@ -1,61 +1,63 @@
 # 編集プレイブック（エンドツーエンド）
 
-## 0. 素材の書き出し（Zencastr）
-1. Zencastr の **Library** で対象エピソードの **⋮** メニュー → **View Tracks**。
-2. 話者ごとのトラックを **MP3** でダウンロード（ミックス済み音源ではなく話者別）。
-3. 文字起こしがあれば **TXT / CSV** でダウンロード（話者ラベル・時刻付き）。
-4. 全ファイルを作業フォルダ `raw/` に置き、[01 ingest](../skills/podcast-01-ingest/SKILL.md) を実行。トラック長の差が 5 秒超なら中断して報告。
+パラメータの唯一の正は [config.yaml](../config.yaml)。本書・スキルに数値を書く場合は config のキー名を併記し、食い違えば config が優先。実行は `run_pipeline.sh <ep> prep …` → レビュー → `run_pipeline.sh <ep> finish`。どのステップも失敗した時点で停止する。
 
-## 1. 前処理
-- 48 kHz / 24bit / mono WAV 化 → 相互相関で同期確認（|offset| > 20 ms のときのみ補正）。
-- 話者別に DeepFilterNet3（atten-lim 12–20 dB）→ pedalboard（HPF 80 Hz → de-ess → Compressor → Limiter）。
-- 話者別に kotoba-whisper-v2.0（float32, beam 5, temperature 0）で文字起こし → MMS_FA で文字単位の時刻を付与（カット点精度のため）。
+## 0. 素材（Zencastr）
+1. Library → エピソードの ⋮ → View Tracks → 話者別 MP3 をダウンロード（ミックスではなく話者別）。文字起こしがあれば TXT。
+2. ingest は元ファイルを **コピー**（移動しない）して `raw/` に置く。元素材は消さない。
 
-## 2. 必須の編集種別
-すべて `cuts.json` に `{start, end, type, reason, transcript_excerpt}` で記録する。
+## 1. 前処理（pipeline/ingest.py, sync.py, clean_*.py, level.py）
+- デコード: `aresample=resampler=soxr` で 48 kHz / 24bit / mono（`ingest.*`）。LAME/Xing タグのエンコーダ遅延・パディングを読み、ギャップレス長を検証。開始オフセットを `logs/probe.json` に記録し `ingest.max_start_offset_s` 超で停止。トラック長差は `ingest.max_length_diff_s`。ffmpeg / libmp3lame のバージョンは `env.ffmpeg_version` / `env.lame_version` と一致しなければ停止。
+- 同期: 最長トラックを基準に、10 ms ログエネルギー包絡（かぶり音）の相互相関。ピーク信頼度 `sync.min_peak_confidence` 未満なら補正しない。オフセット `sync.min_offset_ms`、ドリフト `sync.max_drift_ppm`（ppm）超のみ補正。
+- 整音: DeepFilterNet3（`clean.dfn_atten_lim_db`）→ pedalboard（HPF → de-ess → Compressor → Limiter, `clean.*`）。afftdn は使わない。
+- レベラー: 窓 `level.window_s`、ゲート `level.gate_dbfs`、最大ゲイン ±`level.max_gain_db`、平滑 `level.smoothing_s`、位置はダイナミクスの後・VAD の前。その後 `level.target_lufs` に静的ゲイン。
 
-| type | 内容 | 処理 |
+## 2. VAD・文字起こし・アライメント
+- VAD は Silero のみ（`vad.*` 固定）。無音判定は **話者別 VAD の和集合** の一つだけ。
+- ASR: kotoba-whisper-v2.0（HF revision 固定, float32, beam 5, temperature `[0.0]` のみ）。フォールバック相当（低 logprob・高圧縮率）は `logs/asr_fallbacks.json` に記録。
+- 漢字→かな: fugashi + unidic-lite で分かち書き・品詞、読みは pyopenjtalk（文単位）→ uroman → MMS_FA。セグメントスコア `align.min_segment_score` 未満は `low` とし、その上の候補は review。
+
+## 3. 編集種別（`work/candidates.json` → `labels.json` → `work/edits.json`）
+`edits.json` は唯一の編集リスト: `{id, key, type, track, start, end, action(cut|duck|mute|keep|review), approved, labeler, reason, excerpt, confidence, note}`（raw 秒）。`approved: true` かつ action が review 以外のものだけが適用される。
+
+| type | 検出 | 処理 |
 |---|---|---|
-| `silence` | 無音 1.5 s 超（-45 dB） | 0.6 s に短縮（両側 0.3 s 残す）。ルームトーンで埋める |
-| `filler` | 「えー」「あのー」等の連続・過多 | 削除。単発で自然なものは残す |
-| `backchannel_duck` | 過剰な相槌（他者発話中の「うん」「はい」連打） | 削除ではなく該当トラックを -6〜-10 dB ダッキング |
-| `overlap_yield` | 被り発話で一方が譲った（言いかけて止めた）部分 | 譲った側の言いかけをカット、残る側は無傷 |
-| `false_start` | 3 秒以内の言い直し、「すみません、もう一回」 | 最初の試行を言い直し開始までカット |
-| `crosstalk` | 2 名以上が 2 s 超重なり聞き取れない／歪み | カット、または片方を下げる（人間判断） |
-| `mistake` | 直後に訂正された誤り、「ここカットで」 | カット |
-| `review` | 上記に明確に当てはまらない | **適用しない**。人間レビューへ |
+| `long_pause`（長すぎる沈黙と間） | 話者別 VAD 和集合のギャップ。同一話者内 > `candidates.long_pause.within_turn_min_s`(1.2 s)、話者交代 > `between_speakers_min_s`(1.5 s) | 中央を切り `target_s`(0.7 s) を残す（タイムライン cut、ルームトーン＋クロスフェード）。直後 `laugh_lookahead_s`(2 s) 以内に笑い/反応があれば **review**（オチ前・意図的な間は詰めない） |
+| `filler` | 形態素の品詞が `text.filler_pos`（フィラー/感動詞）かつ `text.fillers` に含まれ、前後に間がある。音響: テキストの無い短い VAD 島・アライナ棄却区間 | 他者無発話なら cut、他者発話中なら自トラック mute。低スコア・保護区間・音響のみは review |
+| `backchannel` | `text.backchannels` のみの短い発話が他者発話中 | 10 s に 1 つ・笑いへの反応は keep、他は自トラックのみ `render.duck_db`(-20 dB) duck。タイムラインは切らない |
+| `overlap_yield` | 発話開始差 ≤ `overlap_onset_s`、譲った側の島 ≤ `yield_max_s`、相手が ≥ `continue_min_s` 継続 | **譲った側の言いかけだけ** を自トラックで mute（ルームトーン）。継続話者は無傷 |
+| `false_start` | かな n-gram の 2 語以内の繰り返し | 他者無発話なら cut 候補、それ以外は review |
+| `crosstalk` | 2 名以上 ≥ `crosstalk_min_s` 重なり | review |
+| `mistake` | `text.mistake_markers`（「ここカットで」等） | review |
 
-## 3. 絶対にカットしないもの
-- 意味が変わるカット
-- ジョーク・笑い（尺短縮のためでも不可）
-- 冒頭 30 秒・末尾 30 秒の内容（無音・イントロ前の雑談を除く）
-- ブレスは削除せず -6 dB 程度に下げる
+自動承認は `labels.auto_approve_types` のみ。他は agent/人間のラベルが必要。
 
-## 4. 人間レビューの流れ
-1. エージェントがルールで候補生成 → ラベル付け（LLM判断は全件承認制、結果は保存して再利用）。
-2. `review` 項目・crosstalk・相槌・意味に関わる候補を時刻付き一覧でユーザーに提示。
-3. 承認／却下を `cuts.json` に反映して EDL 確定。
-4. 固有名詞・技術用語の表記、チャプタータイトルもユーザー確認。
+## 4. 絶対にカットしないもの
+意味が変わるカット／ジョーク・笑い・その反応／冒頭・末尾 `candidates.protect_head_tail_s` 秒の内容（該当候補は review）。ブレス処理は行わない（既知の課題）。
 
-## 5. レンダリング規則
-- EDL を全トラックに同時適用して同期を維持。
-- カット点はゼロクロス付近、等パワークロスフェード 10 ms（同一テイク 5–10 ms、別テイク 20–40 ms、200 ms 超は不可）。
-- 無音は削除ではなくルームトーンで置換。
-- `timemap.json`（raw→編集後時刻）を保存。
+## 5. ラベルとレビュー
+- `labels.json` はキー = hash(候補 + 前後文脈)。再実行で同じ候補には同じラベルが再利用され、`seed` は既存ラベルを上書きしない。未ラベル候補があると render は停止。
+- `review_export.py` → Audacity ラベル（`work/review_labels.txt`）→ 先頭に `OK`/`NG`/`cut`/`duck`/`mute`/`keep` を付けて `review_import.py`。
+- 判断が数値化できないもの（意味・笑い・意図的な間）は review に回し、文章判断で自動適用しない。
 
-## 6. ラウドネス目標
-- 統合ラウドネス **-16 LUFS ±0.5**、トゥルーピーク **≤ -1.0 dBTP**（loudnorm は TP=-1.5, LRA=11, 2パス）。
-- pyloudnorm で測定し、ffmpeg `ebur128` で最終確認。外れたら中断して報告。
+## 6. レンダリング（pipeline/render.py）
+- タイムライン cut は全トラック同時、ミックスの最小エネルギー 5 ms 点へ ±`render.snap_window_ms` でスナップ、`render.crossfade_ms` の等パワークロスフェード（全トラック同一）。
+- duck/mute はトラック内のみ（`render.duck_fade_ms`）。mute はルームトーン置換。
+- ルームトーン: 各トラックの VAD 外で最も静かな `render.roomtone_s` 秒窓をクロスフェードでループ。
+- `work/timemap.json`（raw→編集後）を保存。出力はモノラルミックスを L/R 同一にした **デュアルモノ**。
 
-## 7. QA
-- カット点ごとに 3 s クリップを書き出し再文字起こし：語の欠け・クリック（サンプル跳び ≥ 0.1 FS）なし、レベル跳び > 3 dB なし。
-- 冒頭・末尾 30 s に 1 s 超の無音なし、語の途中切れなし。
-- 各チャプター時刻から 10 s を文字起こしし話題一致を確認。
-- 結果を `logs/qa.md` に pass/fail で記録。最後に人間が通し試聴（1.5倍速可、冒頭/エンディングは等速）。
+## 7. ラウドネス（pipeline/loudness.py：唯一のラウドネスツール）
+- ffmpeg loudnorm 2 パス、`linear=true`。線形にならなければ停止。予測 TP が `loudness.max_true_peak_dbtp - limiter_headroom_db` を超える場合のみ事前に alimiter。
+- 目標 **-16 LUFS ±`qa.lufs_tolerance`、TP ≤ -1.0 dBTP**（WAV・MP3 両方を QA で測定）。
 
-## 8. 納品物
-- `out/<slug>_master.wav`（48 kHz / 24bit / stereo）
-- `out/<slug>.mp3`（192 kbps CBR / 44.1 kHz / stereo）
-- `out/<slug>_shownotes.md`（概要・トピック・紹介リンク・チャプター `mm:ss`）
-- カット集計（種別ごとの件数）と未適用 `review` 項目一覧（時刻付き）
-- アップロード・公開・メール送信はしない（チャットで手渡し）
+## 8. チャプター（pipeline/chapters.py）
+- 再 ASR はしない。raw 文字起こしからタイトルと raw 時刻を `chapters_raw.json` に書き、timemap で編集後時刻へ変換。
+- `out/chapters.json`（Podcasting 2.0）と MP3 の ID3 CHAP/CTOC を書く。`chapters.min_gap_s` 未満の間隔は停止。
+
+## 9. QA（pipeline/qa.py）
+- WAV/MP3 の LUFS・TP、各カット点の 2 s クリップ（`qa.clip_s`）書き出し、クリック = ±2 ms の最大サンプル差 / 周辺 ±50 ms の中央値 > `qa.click_ratio` かつ > `qa.click_min_abs`、レベル跳び > `qa.level_jump_db`、冒頭/末尾無音、long_pause の件数・削減秒・最長残存ギャップ。`logs/qa.md` に記録、失敗で exit 1。最後に人間が通し試聴。
+
+## 10. 納品物（リポジトリ外）
+- `out/<slug>_master.wav`（48 kHz / 24bit / デュアルモノ stereo）、`out/<slug>.mp3`（192 kbps CBR / 44.1 kHz）、`out/chapters.json`
+- ショーノート（概要・トピック・リンク・mm:ss チャプター）。リンク検索は任意で、確認していないものは **未確認** と明記。
+- 種別ごとの件数と削減秒、未適用の review 一覧。アップロード・公開・送信はしない。

@@ -112,7 +112,6 @@ render:
   crossfade_ms: 10              # equal-power, applied per track at every timeline join (same on all tracks)
   snap_window_ms: 30            # snap join to min-energy point of the summed tracks
   roomtone_s: 2.0               # quietest VAD-negative 2 s of each track, looped
-  breath_db: -6
   mix: dual_mono                # mono sum, written as identical L/R
 
 loudness:                       # one tool: ffmpeg loudnorm two-pass, must be linear

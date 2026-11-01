@@ -1,17 +1,8 @@
 ---
 name: podcast-edit-pipeline
-description: >-
-  Use this when asked to edit a podcast episode end to end: runs steps 01–07 in
-  order with fixed settings.
+description: Use this when asked to edit a podcast episode end to end. Runs the repo scripts in order; all parameters live in config.yaml.
 ---
 # Podcast edit pipeline
-Run these in order. Each step reads the previous step's files and writes its own, so a failed step can be rerun alone.
-1. @podcast-01-ingest
-2. @podcast-02-align-mix
-3. @podcast-03-transcribe
-4. @podcast-04-cut-list
-5. @podcast-05-render
-6. @podcast-06-show-notes
-7. @podcast-07-qa-handoff
-
-All settings are fixed in the step skills. Any deviation must be recorded in `logs/notes.md` with a reason, and reported at handoff.
+1. `./run_pipeline.sh <ep> prep --track host=… --track guest_a=… [--transcript …]` (steps 01–04; stops on first failure).
+2. Label review items (@podcast-04-cut-list), then `./run_pipeline.sh <ep> finish` (05–07).
+Do not change parameters in prose; edit `config.yaml` and record why in `<ep>/logs/notes.md`. Episode folders live outside the repo. Never upload, post or send.

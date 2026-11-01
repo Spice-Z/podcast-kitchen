@@ -1,48 +1,35 @@
 # podcast-editing
 
-**English:** Agent skills and a playbook for editing a Japanese multi-speaker podcast end to end on a CPU-only Linux box: ingest Zencastr per-speaker tracks, clean, transcribe, build a reviewable cut list, render to -16 LUFS, write show notes, and QA. Documentation is in Japanese.
+**English:** Scripts, thin agent skills and a playbook for editing a Japanese multi-speaker podcast deterministically on a CPU-only Linux box (Zencastr per-speaker tracks → clean → VAD/ASR/kana alignment → reviewable edit list → render → -16 LUFS / -1 dBTP → chapters → QA). Docs are in Japanese.
 
 ## これは何か
-Zencastr で収録した話者別トラックから、日本語ポッドキャストを決定的（同じ入力→同じ出力）に編集するためのエージェント用スキル集と編集プレイブックです。すべてのカットは `cuts.json` に明示され、隠れた編集はありません。
+話者別トラックから日本語ポッドキャストを決定的（同じ入力 → 同じ出力、ハッシュ一致）に編集するパイプライン。すべての編集は `work/edits.json` に明示され、隠れた編集はない。パラメータは [config.yaml](config.yaml) が唯一の正。
 
-## パイプライン概要
 ```mermaid
 flowchart LR
-  Z[Zencastr<br/>話者別MP3+文字起こし] --> A[01 ingest]
-  A --> B[02 align / clean / mix]
-  B --> C[03 transcribe<br/>kotoba-whisper + MMS_FA]
-  C --> D[04 cut list<br/>cuts.json]
-  D --> H{人間レビュー<br/>review 項目}
-  H --> E[05 render<br/>-16 LUFS WAV + MP3]
-  E --> F[06 show notes<br/>チャプター]
-  F --> G[07 QA / handoff]
+  Z[話者別MP3] --> I[ingest] --> S[sync] --> C[clean_dfn / clean_dynamics] --> L[level] --> V[vad] --> A[asr] --> K[align_kana]
+  K --> D[candidates] --> B[label_store seed] --> H{review_export / import}
+  H --> E[label_store build → edits.json] --> R[render] --> N[loudness] --> P[chapters] --> Q[qa]
 ```
 
-## ステップ
-| # | スキル | 内容 |
-|---|---|---|
-| – | [podcast-edit-pipeline](skills/podcast-edit-pipeline/SKILL.md) | 01–07 を順に実行 |
-| 1 | [podcast-01-ingest](skills/podcast-01-ingest/SKILL.md) | 素材取込・manifest 作成 |
-| 2 | [podcast-02-align-mix](skills/podcast-02-align-mix/SKILL.md) | 同期・整音・ミックス |
-| 3 | [podcast-03-transcribe](skills/podcast-03-transcribe/SKILL.md) | 話者別文字起こし |
-| 4 | [podcast-04-cut-list](skills/podcast-04-cut-list/SKILL.md) | カットリスト作成 |
-| 5 | [podcast-05-render](skills/podcast-05-render/SKILL.md) | カット適用・ラウドネス・書き出し |
-| 6 | [podcast-06-show-notes](skills/podcast-06-show-notes/SKILL.md) | ショーノート・チャプター |
-| 7 | [podcast-07-qa-handoff](skills/podcast-07-qa-handoff/SKILL.md) | QA・納品 |
+## 使い方
+```bash
+./run_pipeline.sh EP prep --track host=host.mp3 --track guest_a=a.mp3 --track guest_b=b.mp3 [--transcript t.txt]
+# review: EP/work/review_labels.txt を Audacity で確認 → review_import.py / label_store.py set|approve
+./run_pipeline.sh EP finish
+tools/determinism.sh OUTROOT - --track ...   # 2 回実行してハッシュ比較
+```
+エピソードフォルダはリポジトリ外に置く（音声・氏名・ID をコミットしない）。
 
-詳細手順: [playbook/editing-playbook.md](playbook/editing-playbook.md) / 技術選定メモ: [playbook/strategy.md](playbook/strategy.md) / パラメータ: [config.example.yaml](config.example.yaml)
+## スクリプト（pipeline/）
+ingest · sync · clean_dfn · clean_dynamics · level · vad · asr · align_kana · candidates · label_store · review_export · review_import · render · loudness · chapters · qa（共通: common.py）。テスト: `pytest tests`。
 
-## 必要環境
-- CPU のみの Linux（目安 8 vCPU / 15GB RAM）、ffmpeg 7.x
-- Python 3.11 の venv（uv 推奨。3.13 では DeepFilterNet 等の依存が入らない場合あり）
-- モデル・ライブラリ
-  - ASR: faster-whisper + **kotoba-whisper-v2.0**（`compute_type=float32`、int8 不可）
-  - ノイズ除去: **DeepFilterNet3**
-  - 強制アライメント: **torchaudio `MMS_FA`**（+ uroman）
-  - EQ/ダイナミクス: **pedalboard**
-  - ラウドネス測定: **pyloudnorm**（最終は ffmpeg loudnorm 2パス）
+## 環境
+- CPU Linux, ffmpeg 7.1.5 + libmp3lame 3.100 + libsoxr（ingest がバージョンを検証）
+- venv 2 つ（uv）: `requirements/dfn_asr.lock.txt`（torch 2.0.1, DeepFilterNet 0.5.6, faster-whisper 1.2.1）と `requirements/main.lock.txt`（torch 2.8, silero-vad, fugashi+unidic-lite, pyopenjtalk-plus, pedalboard, mutagen, pytest）
+- モデル: kotoba-whisper-v2.0-faster（revision 固定）, DeepFilterNet3, torchaudio MMS_FA, Silero VAD
 
-`tools/smoke/` に CPU 速度確認用のスモークテストがあります。音声・モデルは含みません。
+詳細: [playbook/editing-playbook.md](playbook/editing-playbook.md) / 技術選定メモ（履歴）: [playbook/strategy.md](playbook/strategy.md)
 
 ## License
 MIT

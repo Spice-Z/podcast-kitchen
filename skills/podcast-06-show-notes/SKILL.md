@@ -1,14 +1,6 @@
 ---
 name: podcast-06-show-notes
-description: >-
-  Use this as step 6 of a podcast edit: write Japanese show notes and mm:ss
-  chapters timed against the edited audio.
+description: Use this as step 6 of a podcast edit: chapters (no re-ASR) and show notes.
 ---
-# Podcast step 6: show notes and chapters
-1. Re-transcribe `out/<slug>.mp3` with the same settings as step 3, or map the raw transcript through `timemap.json`. Chapters must use edited-file times, never raw times.
-2. Write `out/<slug>_shownotes.md` in Japanese, in this fixed format:
-   - `## 概要`: a 2–3 line summary
-   - `## トピック`: bullets
-   - `## 紹介したリンク`: every tool, site or product mentioned, with its official URL (search the web to confirm each one; leave out any you can't confirm and list them as unconfirmed)
-   - `## チャプター`: `mm:ss タイトル`, starting at `00:00`, one at each topic change, at least 2 minutes apart
-3. Spelling check: proper names of tools and companies must use their official spelling (e.g. GitHub, ChatGPT, OpenAI, AWS). Keep a log of the fixes in `logs/typos.md`.
+# Step 6: chapters and show notes
+Write `<ep>/chapters_raw.json` (`[{raw_s, title}]`) from the raw transcript, then `chapters.py` maps through `timemap.json`, writes `out/chapters.json` (Podcasting 2.0) and ID3 CHAP/CTOC, plus `work/transcript_edited.txt`. Show notes (Japanese): 2–3 line summary, topic bullets, links, mm:ss chapters. Link lookup is optional; mark every unchecked link 未確認.
