@@ -1,6 +1,6 @@
 """Step 4a: deterministic rule candidates -> work/candidates.json (raw seconds, after sync).
 
-Types (config.candidates, config.text): long_pause, filler, backchannel, overlap_yield, false_start,
+Types (config.candidates, config.text): long_pause, filler, backchannel, overlap_yield, overlap_restart, false_start,
 crosstalk, mistake. Every candidate carries `default_action` from a measurable proxy; anything the
 rules cannot decide is `review`. Timeline cuts use track 'all'; duck/mute act on one track only."""
 import argparse
@@ -190,6 +190,59 @@ def overlap_yield(ctx):
     return out
 
 
+CONTENT_POS = ("名詞", "動詞", "形容詞", "形状詞", "副詞")
+
+
+def reading(w):
+    """Reading-normalized token: katakana reading (or surface), long-vowel marks unified, small tsu dropped."""
+    k = (w.get("kana") or w.get("surface") or "")
+    k = "".join(chr(ord(ch) + 0x60) if "ぁ" <= ch <= "ゖ" else ch for ch in k)   # hiragana -> katakana
+    return norm(k).replace("ッ", "")
+
+
+def content_words(ctx, g):
+    stop = set(ctx.t["backchannels"]) | set(ctx.t["fillers"])
+    light = {reading({"kana": k}) for k in ctx.c.get("overlap_restart", {}).get("light_words", [])}
+    return {reading(w) for w in g.get("words", []) if reading(w) not in light} & {reading(w) for w in g.get("words", []) if w.get("kana") or w.get("surface")
+            if (w.get("pos") or "名詞").split("-")[0] in CONTENT_POS and norm(w.get("surface", "")) not in stop
+            and len(reading(w)) >= 2}
+
+
+def overlap_restart(ctx):
+    """Speaker X starts a short phrase (<= overlap_restart.max_s) and another speaker starts within
+    overlap_onset_s and overlaps it; X then restarts within restart_window_s with a phrase sharing >= 1 content
+    word (reading-normalized) -> X's aborted phrase is muted on X's track only (timeline intact, other speaker kept).
+    Auto-decided (labels.auto_approve_types); never touches head/tail or laughs."""
+    c = ctx.c.get("overlap_restart", {})
+    if not c.get("enabled", True):
+        return []
+    mx, win, ons = c.get("max_s", 2.0), c.get("restart_window_s", 2.5), ctx.c["overlap_onset_s"]
+    out = []
+    for x in ctx.spk:
+        gs = [g for g in ctx.words.get(x, []) if g["status"] == "ok"]
+        for i, g in enumerate(gs):
+            a0, a1 = g["start"], g["end"]
+            if a1 - a0 > mx or norm(g["text"]) in set(ctx.t["backchannels"]):
+                continue
+            other = [(o, h) for o in ctx.spk if o != x for h in ctx.words.get(o, [])
+                     if h["status"] == "ok" and abs(h["start"] - a0) <= ons and overlap(h["start"], h["end"], a0, a1) > 0]
+            if not other:
+                continue
+            nxt = next((h for h in gs[i + 1:] if h["start"] >= a1 - 1e-6), None)
+            if nxt is None or nxt["start"] - a1 > win:
+                continue
+            shared = content_words(ctx, g) & content_words(ctx, nxt)
+            if not shared:
+                continue
+            if ctx.protected_edge(a0, a1) or ctx.near_laugh(a0, a1, ctx.c["laugh_protect_s"]):
+                continue
+            o, h = other[0]
+            why = (f"{x} aborted 「{g['text']}」 as {o} started ({abs(h['start']-a0):.2f}s apart), restarted "
+                   f"{nxt['start']-a1:.2f}s later 「{nxt['text']}」 (shared: {'/'.join(sorted(shared))}); mute {x}'s track only")
+            out.append(cand(ctx, "overlap_restart", x, a0, a1, "mute", why, 0.8))
+    return out
+
+
 def false_starts(ctx):
     out = []; c = ctx.c
     global BC_FL
@@ -247,7 +300,12 @@ def mistakes(ctx):
 
 def build(vad, words, cfg):
     ctx = Ctx(vad, words, cfg)
-    cs = long_pauses(ctx) + fillers(ctx) + backchannels(ctx) + overlap_yield(ctx) + false_starts(ctx) + crosstalk(ctx) + mistakes(ctx)
+    cs = long_pauses(ctx) + fillers(ctx) + backchannels(ctx) + overlap_yield(ctx) + overlap_restart(ctx) + false_starts(ctx) + crosstalk(ctx) + mistakes(ctx)
+    # an aborted phrase detected as overlap_restart is decided (auto mute): drop the overlap_yield on the same
+    # track/span so keep_overlap_yield cannot auto-keep it
+    ors = [c for c in cs if c["type"] == "overlap_restart"]
+    cs = [c for c in cs if not (c["type"] == "overlap_yield" and any(
+        o["track"] == c["track"] and overlap(o["start"], o["end"], c["start"], c["end"]) > 0 for o in ors))]
     seen, out = set(), []
     for c in sorted(cs, key=lambda c: (c["start"], c["type"], c["track"], c["end"])):
         if c["key"] not in seen:

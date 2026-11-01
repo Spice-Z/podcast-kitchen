@@ -108,6 +108,11 @@ candidates:
   continue_window_s: 4.0
   yield_pre_silence_s: 1.0      # yielder was silent this long before (a turn start, not the end of their sentence)
   yield_marker_window_s: 3.0    # mute only if the yielder says a yield marker (text.yield_markers) within this; else review
+  overlap_restart:              # aborted short phrase under another speaker's onset, restarted with a shared content word
+    enabled: true
+    max_s: 2.0                  # aborted phrase at most this long
+    restart_window_s: 2.5       # restart starts within this after the aborted phrase ends -> auto mute own track only
+    light_words: [イル, イッ, ミタイ, スル, シ, ナル, アル, イウ, イワ, オモウ, オモ, コト, モノ, トコ, ヤツ, ソー, コー, ドー, ナン, ナンカ, ヨー, デキ, クル, キ, ク, ヤッ, ヤル]  # light verbs/nouns that do not prove a restart
   false_start_window_s: 3
   false_start_min_kana: 3
   crosstalk_min_overlap_s: 2
@@ -121,7 +126,7 @@ candidates:
 
 labels:
   # rule labels on these types are auto-approved; everything else needs approved: true
-  auto_approve_types: [long_pause, filler, backchannel]
+  auto_approve_types: [long_pause, filler, backchannel, overlap_restart]
 
 render:
   duck_db: -20                  # the only duck depth

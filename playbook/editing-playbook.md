@@ -77,3 +77,7 @@
 
 ## リポジトリ運用（絶対ルール）
 - スキル・ポリシー・config・playbook の変更はすべてこのリポジトリにコミットし、**必ず GitHub に反映する**。コミット後に sha を報告し、push 権限/承認がある環境で push する（ローカルだけに残さない）。
+
+
+### overlap_restart（被って言い直し）
+話者 X の短い発話（≤ `candidates.overlap_restart.max_s` = 2.0 s）に別の話者が `overlap_onset_s`（0.5 s）以内に話し始めて被り、X が `restart_window_s`（2.5 s）以内に、読み正規化した内容語（`light_words` 以外）を 1 つ以上共有するフレーズで言い直した場合、X の言いかけを **X のトラックだけ自動ミュート**。タイムラインは切らず、相手の発話は残す。auto-approve 対象で、同じ区間の overlap_yield（keep_overlap_yield で自動 keep）は出さない。後に残る間は既存の long_pause が詰める。回帰: 20261026 host 151.43–153.15「なんか最近言われてるのは」→ 154.88「最近ちょろっと聴いたのは」（guest_a 151.62–153.92 は残す）。

@@ -99,3 +99,38 @@ def test_auto_decide_only_keeps():
           {"type": "filler", "default_action": "cut", "reason": "filler", "confidence": 0.9}]
     out = C.auto_decide(cs, {"enabled": True})
     assert [c["default_action"] for c in out] == ["keep", "review", "cut"]
+
+
+def RW(s, k, pos, t):
+    return {"surface": s, "kana": k, "pos": pos, "start": t, "end": t + 0.1, "score": 0.9}
+
+
+def _restart_fixture(restart_at=154.882, restart_words=None):
+    host_abort = seg(151.426, 153.154, "なんか最近言われてるのは", [RW("なん", "ナン", "代名詞", 151.437), RW("か", "カ", "助詞", 151.557),
+                     RW("最近", "サイキン", "名詞", 151.637), RW("言わ", "イワ", "動詞", 151.979), RW("の", "ノ", "助詞", 152.421), RW("は", "ワ", "助詞", 152.541)])
+    rw = restart_words or [RW("最近", "サイキン", "名詞", restart_at + 0.01), RW("ちょろっ", "チョロッ", "副詞", restart_at + 0.4),
+                           RW("聴い", "キイ", "動詞", restart_at + 0.8), RW("の", "ノ", "助詞", restart_at + 1.0)]
+    host_restart = seg(restart_at, restart_at + 1.6, "最近ちょろっと聴いたのは", rw)
+    ga = seg(151.618, 153.922, "学生時代の過ごし方", [RW("学生", "ガクセー", "名詞", 151.609), RW("時代", "ジダイ", "名詞", 152.154)])
+    v = {"duration_s": 300.0, "speakers": {"host": [[151.426, 153.054], [restart_at, restart_at + 1.5]], "guest_a": [[151.618, 153.822]]}}
+    v["union"] = sorted([list(x) for s in v["speakers"].values() for x in s])
+    return v, {"host": [host_abort, host_restart], "guest_a": [ga]}
+
+
+def test_overlap_restart_20261026_mutes_host_abort_only(cfg):
+    v, w = _restart_fixture()
+    cs = C.build(v, w, cfg)
+    orr = [c for c in cs if c["type"] == "overlap_restart"]
+    assert len(orr) == 1 and orr[0]["track"] == "host" and orr[0]["default_action"] == "mute"
+    assert (orr[0]["start"], orr[0]["end"]) == (151.426, 153.154)
+    assert not [c for c in cs if c["track"] == "guest_a" and c["default_action"] in ("cut", "mute", "duck")]
+    assert not [c for c in cs if c["type"] == "overlap_yield" and c["track"] == "host"]  # not auto-kept
+    assert not [c for c in cs if c["type"] == "overlap_restart" and c["track"] == "all"]
+    assert "overlap_restart" in cfg["labels"]["auto_approve_types"]
+
+
+def test_overlap_restart_needs_shared_content_word_and_window(cfg):
+    v, w = _restart_fixture(restart_words=[RW("英語", "エーゴ", "名詞", 154.9), RW("の", "ノ", "助詞", 155.2)])
+    assert not [c for c in C.build(v, w, cfg) if c["type"] == "overlap_restart"]
+    v, w = _restart_fixture(restart_at=153.154 + cfg["candidates"]["overlap_restart"]["restart_window_s"] + 0.3)
+    assert not [c for c in C.build(v, w, cfg) if c["type"] == "overlap_restart"]
