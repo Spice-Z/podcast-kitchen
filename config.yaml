@@ -112,7 +112,22 @@ candidates:
     enabled: true
     max_s: 2.0                  # aborted phrase at most this long
     restart_window_s: 2.5       # restart starts within this after the aborted phrase ends -> auto mute own track only
+    interject_lead_s: 0.5       # interjection case: the other speaker's substantive line started >= this before X (instead of an onset match)
+    interject_end_re: '(か|\?|？|。|！|!)\s*$'   # interjection case skipped when X's phrase ends like this (「2022年か」「すごいね。」)
     light_words: [イル, イッ, ミタイ, スル, シ, ナル, アル, イウ, イワ, オモウ, オモ, コト, モノ, トコ, ヤツ, ソー, コー, ドー, ナン, ナンカ, ヨー, デキ, クル, キ, ク, ヤッ, ヤル]  # light verbs/nouns that do not prove a restart
+  overlap_abandon:              # X's short phrase inside Y's ongoing line, X then gives up -> AUTO mute X's track only
+    enabled: true
+    max_s: 2.0
+    continue_after_s: 1.0       # Y keeps talking at least this long past X's end
+    silent_after_s: 3.0         # X says nothing for this long after
+    vad_tail_s: 0.2             # VAD hangover after X's phrase ignored for the silence check
+    vad_tolerance_s: 0.15       # VAD speech allowed in the silent window (breath/noise)
+    sentence_end_re: '(。|！|!|\?|？|か|です|ます|でした|ました|よね|ね|よ|な|かな|だ|た|る|い|う)\s*$'  # finished phrase -> not abandoned
+  mutual_yield:                 # both start together, both stop, one says どうぞ, the other restarts -> AUTO timeline cut
+    enabled: true
+    markers: [どうぞ, お先に]
+    gap_s: 0.4                  # natural gap left before the restart
+    restart_window_s: 3.0       # restart begins within this after the marker ends
   false_start_window_s: 3
   false_start_min_kana: 3
   crosstalk_min_overlap_s: 2
@@ -126,7 +141,7 @@ candidates:
 
 labels:
   # rule labels on these types are auto-approved; everything else needs approved: true
-  auto_approve_types: [long_pause, filler, backchannel, overlap_restart]
+  auto_approve_types: [long_pause, filler, backchannel, overlap_restart, overlap_abandon, mutual_yield]
 
 render:
   duck_db: -20                  # the only duck depth

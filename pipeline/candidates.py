@@ -1,9 +1,11 @@
 """Step 4a: deterministic rule candidates -> work/candidates.json (raw seconds, after sync).
 
-Types (config.candidates, config.text): long_pause, filler, backchannel, overlap_yield, overlap_restart, false_start,
+Types (config.candidates, config.text): long_pause, filler, backchannel, overlap_yield, overlap_restart,
+overlap_abandon, mutual_yield, false_start,
 crosstalk, mistake. Every candidate carries `default_action` from a measurable proxy; anything the
 rules cannot decide is `review`. Timeline cuts use track 'all'; duck/mute act on one track only."""
 import argparse
+import re
 from pathlib import Path
 from common import dump, key, load, load_cfg, log_step, speakers, r
 
@@ -226,6 +228,13 @@ def overlap_restart(ctx):
                 continue
             other = [(o, h) for o in ctx.spk if o != x for h in ctx.words.get(o, [])
                      if h["status"] == "ok" and abs(h["start"] - a0) <= ons and overlap(h["start"], h["end"], a0, a1) > 0]
+            lead = c.get("interject_lead_s", 0.5)
+            inter = [] if other else [(o, h) for o in ctx.spk if o != x for h in ctx.words.get(o, [])
+                                      if h["status"] == "ok" and h["start"] <= a0 - lead and h["end"] > a0
+                                      and norm(h["text"]) not in set(ctx.t["backchannels"])]
+            if inter and re.search(c.get("interject_end_re", r"(か|\?|？|。|！|!)\s*$"), g["text"].strip()):
+                continue  # 「2022年か」「前半?後半?」「すごいね。」: a finished reaction, not an aborted phrase
+            other = other or inter
             if not other:
                 continue
             nxt = next((h for h in gs[i + 1:] if h["start"] >= a1 - 1e-6), None)
@@ -237,9 +246,91 @@ def overlap_restart(ctx):
             if ctx.protected_edge(a0, a1) or ctx.near_laugh(a0, a1, ctx.c["laugh_protect_s"]):
                 continue
             o, h = other[0]
-            why = (f"{x} aborted 「{g['text']}」 as {o} started ({abs(h['start']-a0):.2f}s apart), restarted "
+            how = (f"inside {o}'s ongoing line (started {a0-h['start']:.2f}s earlier)" if inter
+                   else f"as {o} started ({abs(h['start']-a0):.2f}s apart)")
+            why = (f"{x} aborted 「{g['text']}」 {how}, restarted "
                    f"{nxt['start']-a1:.2f}s later 「{nxt['text']}」 (shared: {'/'.join(sorted(shared))}); mute {x}'s track only")
             out.append(cand(ctx, "overlap_restart", x, a0, a1, "mute", why, 0.8))
+    return out
+
+
+def overlap_abandon(ctx):
+    """X's short phrase (<= max_s, not a backchannel/filler/laugh) lies inside Y's ongoing substantive line, Y keeps
+    talking >= continue_after_s past X's end, X stays silent for silent_after_s, and the phrase is not
+    sentence-ending -> X gave up: mute X's track only (timeline and Y untouched). Auto-approved."""
+    c = ctx.c.get("overlap_abandon", {})
+    if not c.get("enabled", True):
+        return []
+    mx, cont, sil = c.get("max_s", 2.0), c.get("continue_after_s", 1.0), c.get("silent_after_s", 3.0)
+    end_re = c.get("sentence_end_re", r"(。|！|!|\?|？|か|です|ます|でした|ました|よね|ね|よ|な|かな|だ|た|る|い|う)\s*$")
+    light = set(ctx.t["backchannels"]) | set(ctx.t["fillers"]) | {"うん", "はい", "そう"}
+    V = ctx.vad["speakers"]; out = []
+    for x in ctx.spk:
+        gs = [g for g in ctx.words.get(x, []) if g["status"] == "ok"]
+        for g in gs:
+            a0, a1, txt = g["start"], g["end"], g["text"].strip()
+            if a1 - a0 > mx or not norm(txt) or norm(txt) in light or all(norm(w["surface"]) in light for w in g["words"]):
+                continue
+            if any(m in txt for m in ctx.t["laugh_markers"]) or re.search(end_re, txt):
+                continue
+            ys = [(y, h) for y in ctx.spk if y != x for h in ctx.words.get(y, []) if h["status"] == "ok"
+                  and h["start"] < a0 and h["end"] >= a1 + cont and norm(h["text"]) not in light]
+            if not ys:
+                continue
+            if any(h["start"] > a1 + 1e-6 and h["start"] < a1 + sil for h in ctx.words.get(x, []) if h["status"] != "rejected"):
+                continue
+            if speech(V[x], a1 + c.get("vad_tail_s", 0.2), a1 + sil) > c.get("vad_tolerance_s", 0.15):
+                continue
+            if ctx.protected_edge(a0, a1) or ctx.near_laugh(a0, a1, ctx.c["laugh_protect_s"]):
+                continue
+            y, h = ys[0]
+            why = (f"{x} abandoned 「{txt}」 inside {y}'s line 「{h['text'][:30]}」 ({y} continues {h['end']-a1:.2f}s, "
+                   f"{x} silent {sil}s after); mute {x}'s track only")
+            out.append(cand(ctx, "overlap_abandon", x, a0, a1, "mute", why, 0.7))
+    return out
+
+
+def mutual_yield(ctx):
+    """Both speakers start within overlap_onset_s, both stop within yield_max_s, one of them says a mutual_yield
+    marker (どうぞ/お先に) within yield_marker_window_s, and the OTHER restarts -> timeline cut from the first onset
+    to gap_s before the restart (the collision, the どうぞ and any aizuchi between go; a natural gap remains).
+    Review instead when a third speaker talks inside, or head/tail/laugh is involved. Auto-approved."""
+    c = ctx.c.get("mutual_yield", {})
+    if not c.get("enabled", True):
+        return []
+    ons, ym, mw = ctx.c["overlap_onset_s"], ctx.c["yield_max_s"], ctx.c["yield_marker_window_s"]
+    marks, gap, rw = c.get("markers", ["どうぞ", "お先に"]), c.get("gap_s", 0.4), c.get("restart_window_s", 3.0)
+    light = set(ctx.t["backchannels"]) | {"うん", "はい", "そう"}
+    G = {s: [g for g in ctx.words.get(s, []) if g["status"] != "rejected"] for s in ctx.spk}
+    out = []
+    for i, a in enumerate(ctx.spk):
+        for b in ctx.spk[i + 1:]:
+            for ga in G[a]:
+                if ga["end"] - ga["start"] > ym or any(m in ga["text"] for m in marks):
+                    continue
+                for gb in G[b]:
+                    if abs(gb["start"] - ga["start"]) > ons or gb["end"] - gb["start"] > ym or any(m in gb["text"] for m in marks):
+                        continue
+                    t0, stop = min(ga["start"], gb["start"]), max(ga["end"], gb["end"])
+                    mk = sorted([(m["start"], s, m) for s in (a, b) for m in G[s]
+                                 if any(k in m["text"] for k in marks) and stop - 0.05 <= m["start"] <= stop + mw], key=lambda z: z[0])
+                    if not mk:
+                        continue
+                    _, giver, m = mk[0]
+                    other = b if giver == a else a
+                    rs = next((h for h in G[other] if h["start"] >= m["start"] and norm(h["text"]) not in light
+                               and not any(k in h["text"] for k in marks)), None)
+                    if rs is None or rs["start"] - m["end"] > rw:
+                        continue
+                    t1 = rs["start"] - gap
+                    if t1 - t0 < 0.3:
+                        continue
+                    third = sum(speech(ctx.vad["speakers"][s], t0, t1) for s in ctx.spk if s not in (a, b))
+                    rev = third > 0.1 or ctx.protected_edge(t0, t1) or ctx.near_laugh(t0, t1, ctx.c["laugh_protect_s"])
+                    why = (f"{a}/{b} collided ({abs(gb['start']-ga['start']):.2f}s apart), {giver} said 「{m['text']}」, {other} restarted "
+                           f"「{rs['text'][:30]}」 -> cut collision to {gap}s before restart" + ("; third speaker/protected -> review" if rev else ""))
+                    out.append(cand(ctx, "mutual_yield", TIMELINE, t0, t1, "review" if rev else "cut", why, 0.8))
+                    break
     return out
 
 
@@ -300,7 +391,15 @@ def mistakes(ctx):
 
 def build(vad, words, cfg):
     ctx = Ctx(vad, words, cfg)
-    cs = long_pauses(ctx) + fillers(ctx) + backchannels(ctx) + overlap_yield(ctx) + overlap_restart(ctx) + false_starts(ctx) + crosstalk(ctx) + mistakes(ctx)
+    my = mutual_yield(ctx); ors0 = overlap_restart(ctx)
+    ab = [c for c in overlap_abandon(ctx) if not any(o["track"] == c["track"] and overlap(o["start"], o["end"], c["start"], c["end"]) > 0 for o in ors0)]
+    cs = long_pauses(ctx) + fillers(ctx) + backchannels(ctx) + overlap_yield(ctx) + ors0 + ab + false_starts(ctx) + crosstalk(ctx) + mistakes(ctx)
+    # a mutual_yield cut removes the whole collision: drop the smaller edits inside it (incl. overlap_yield, so
+    # keep_overlap_yield cannot keep it)
+    myc = [m for m in my if m["default_action"] == "cut"]
+    cs = my + [c for c in cs if not any(overlap(m["start"], m["end"], c["start"], c["end"]) > 0 and (
+        c["type"] in ("overlap_yield", "overlap_restart", "overlap_abandon", "backchannel", "filler")
+        or (c["start"] >= m["start"] and c["end"] <= m["end"])) for m in myc)]
     # an aborted phrase detected as overlap_restart is decided (auto mute): drop the overlap_yield on the same
     # track/span so keep_overlap_yield cannot auto-keep it
     ors = [c for c in cs if c["type"] == "overlap_restart"]

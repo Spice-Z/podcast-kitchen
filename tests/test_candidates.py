@@ -134,3 +134,94 @@ def test_overlap_restart_needs_shared_content_word_and_window(cfg):
     assert not [c for c in C.build(v, w, cfg) if c["type"] == "overlap_restart"]
     v, w = _restart_fixture(restart_at=153.154 + cfg["candidates"]["overlap_restart"]["restart_window_s"] + 0.3)
     assert not [c for c in C.build(v, w, cfg) if c["type"] == "overlap_restart"]
+
+
+def _T(cs, typ):
+    return [c for c in cs if c["type"] == typ]
+
+
+def _mutual_fixture(marker="どうぞ", restart_at=1612.26, third=False):
+    host = [seg(1609.06, 1609.98, "私なんか"), seg(1611.20, 1611.84, marker)]
+    ga = [seg(1609.12, 1610.30, "まあでもなんか"), seg(1610.47, 1610.80, "うん"), seg(restart_at, restart_at + 4.0, "01のハードルだいぶ下がった")]
+    sp = {"host": [[1609.06, 1609.98], [1611.20, 1611.84]], "guest_a": [[1609.12, 1610.30], [1610.47, 1610.80], [restart_at, restart_at + 4.0]], "guest_b": []}
+    gb = []
+    if third:
+        sp["guest_b"] = [[1610.9, 1611.1]]; gb = [seg(1610.9, 1611.1, "へえ")]
+    return vad(sp, 3000.0), {"host": host, "guest_a": ga, "guest_b": gb}
+
+
+def test_mutual_yield_cuts_collision_to_gap_before_restart(cfg):
+    v, w = _mutual_fixture()
+    cs = C.build(v, w, cfg)
+    my = _T(cs, "mutual_yield")
+    gap = cfg["candidates"]["mutual_yield"]["gap_s"]
+    assert len(my) == 1 and my[0]["track"] == "all" and my[0]["default_action"] == "cut"
+    assert my[0]["start"] == 1609.06 and abs(my[0]["end"] - (1612.26 - gap)) < 1e-6
+    assert 0.3 <= gap <= 0.5
+    assert not _T(cs, "overlap_yield")  # not left to keep_overlap_yield
+    assert "mutual_yield" in cfg["labels"]["auto_approve_types"]
+
+
+def test_mutual_yield_guards(cfg):
+    v, w = _mutual_fixture(marker="なるほど")      # no どうぞ/お先に
+    assert not _T(C.build(v, w, cfg), "mutual_yield")
+    v, w = _mutual_fixture(restart_at=1611.84 + cfg["candidates"]["mutual_yield"]["restart_window_s"] + 0.5)
+    assert not _T(C.build(v, w, cfg), "mutual_yield")  # nobody restarts
+    v, w = _mutual_fixture(third=True)
+    assert [c["default_action"] for c in _T(C.build(v, w, cfg), "mutual_yield")] == ["review"]
+    cfg["candidates"]["mutual_yield"]["enabled"] = False
+    v, w = _mutual_fixture()
+    assert not _T(C.build(v, w, cfg), "mutual_yield")
+
+
+def _interject_fixture(text="ハードルね", words=None):
+    words = words or [RW("ハードル", "ハードル", "名詞", 1624.6), RW("ね", "ネ", "助詞", 1625.5)]
+    host = [seg(1624.51, 1625.73, text, words),
+            seg(1627.91, 1630.5, "01のハードルがなくなった", [RW("01", "ゼロイチ", "名詞", 1627.91), RW("ハードル", "ハードル", "名詞", 1628.4)])]
+    gb = [seg(1622.43, 1625.92, "やっぱりそこのハードルが下がって")]
+    sp = {"host": [[1624.51, 1625.73], [1627.91, 1630.5]], "guest_b": [[1622.43, 1625.92]]}
+    return vad(sp, 3000.0), {"host": host, "guest_b": gb}
+
+
+def test_overlap_restart_interjection_mutes_own_track(cfg):
+    v, w = _interject_fixture()
+    o = _T(C.build(v, w, cfg), "overlap_restart")
+    assert len(o) == 1 and o[0]["track"] == "host" and o[0]["default_action"] == "mute" and "ongoing line" in o[0]["reason"]
+
+
+def test_overlap_restart_interjection_skips_finished_reactions(cfg):
+    for t in ("2022年か", "前半?後半?", "すごいね。", "ハードルね!"):
+        v, w = _interject_fixture(text=t, words=[RW(t, "ハードル", "名詞", 1624.6)])
+        assert not _T(C.build(v, w, cfg), "overlap_restart"), t
+    cfg["candidates"]["overlap_restart"]["interject_lead_s"] = 5.0   # guest_b only 2.08s ahead
+    v, w = _interject_fixture()
+    assert not _T(C.build(v, w, cfg), "overlap_restart")
+
+
+def _abandon_fixture(text="でもなんかその", x_again=None, y_end=2196.0, words=None):
+    words = words or [RW("でも", "デモ", "接続詞", 2188.4), RW("その", "ソノ", "連体詞", 2189.0)]
+    host = [seg(2188.39, 2189.28, text, words)]
+    sp_h = [[2188.39, 2189.28]]
+    if x_again:
+        host.append(seg(x_again, x_again + 1.0, "AIを使う才能")); sp_h.append([x_again, x_again + 1.0])
+    gb = [seg(2183.4, y_end, "自分も子供生まれたから分かるけど")]
+    return vad({"host": sp_h, "guest_b": [[2183.4, y_end]]}, 3000.0), {"host": host, "guest_b": gb}
+
+
+def test_overlap_abandon_mutes_only_abandoner(cfg):
+    v, w = _abandon_fixture()
+    cs = C.build(v, w, cfg)
+    a = _T(cs, "overlap_abandon")
+    assert len(a) == 1 and a[0]["track"] == "host" and a[0]["default_action"] == "mute"
+    assert not [c for c in cs if c["track"] in ("guest_b", "all") and c["default_action"] in ("cut", "mute")]
+    assert "overlap_abandon" in cfg["labels"]["auto_approve_types"]
+
+
+def test_overlap_abandon_guards(cfg):
+    for t in ("2022年か", "すごいね。", "そうなんだ", "うん", "(笑)"):
+        v, w = _abandon_fixture(text=t, words=[RW(t, t, "名詞", 2188.4)])
+        assert not _T(C.build(v, w, cfg), "overlap_abandon"), t
+    v, w = _abandon_fixture(x_again=2191.0)          # X speaks again within 3 s
+    assert not [c for c in _T(C.build(v, w, cfg), "overlap_abandon") if c["start"] == 2188.39]
+    v, w = _abandon_fixture(y_end=2189.8)            # Y stops < 1 s after X
+    assert not _T(C.build(v, w, cfg), "overlap_abandon")

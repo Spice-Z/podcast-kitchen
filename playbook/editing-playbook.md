@@ -99,3 +99,11 @@
 
 ### overlap_restart（被って言い直し）
 話者 X の短い発話（≤ `candidates.overlap_restart.max_s` = 2.0 s）に別の話者が `overlap_onset_s`（0.5 s）以内に話し始めて被り、X が `restart_window_s`（2.5 s）以内に、読み正規化した内容語（`light_words` 以外）を 1 つ以上共有するフレーズで言い直した場合、X の言いかけを **X のトラックだけ自動ミュート**。タイムラインは切らず、相手の発話は残す。auto-approve 対象で、同じ区間の overlap_yield（keep_overlap_yield で自動 keep）は出さない。後に残る間は既存の long_pause が詰める。回帰: 20261026 host 151.43–153.15「なんか最近言われてるのは」→ 154.88「最近ちょろっと聴いたのは」（guest_a 151.62–153.92 は残す）。
+
+**割り込み型**（overlap_onset 不一致でも可）：X のフレーズが、相手の内容のある発話（`interject_lead_s` = 0.5 s 以上前に開始）の最中に始まり、上記と同じ長さ・言い直し・共有内容語の条件を満たす場合も X のトラックだけミュート。ただし `interject_end_re`（か / ? / 。！）で終わるフレーズ（「2022年か」「前半?後半?」「すごいね。」）は完結した反応なので除外。回帰: 20261026 host 1624.51「ハードルね」→ 1627.91「01のハードルが…」（v8 26:19）。
+
+### overlap_abandon（言いかけて諦め）
+X の短い発話（≤ `candidates.overlap_abandon.max_s` = 2.0 s、相槌・フィラー・笑いでない）が相手 Y の進行中の内容発話の中にあり、Y が X の終了後 `continue_after_s`（1.0 s）以上話し続け、X が `silent_after_s`（3.0 s）沈黙し、`sentence_end_re`（。?か・です/ます/ね/よ/た/る 等）で終わらない場合、X のトラックだけ自動ミュート。auto-approve 対象。
+
+### mutual_yield（お見合い・譲り合い）
+2 人の立ち上がりが `overlap_onset_s`（0.5 s）以内、両者とも `yield_max_s`（1.5 s）以内に止まり、片方が `mutual_yield.markers`（どうぞ/お先に）を `yield_marker_window_s`（3 s）以内に言い、もう片方が `restart_window_s`（3 s）以内に話し直した場合、最初の立ち上がりから言い直しの `gap_s`（0.4 s）手前までを **タイムラインカット**（衝突・どうぞ・間の相槌ごと除去）。keep_overlap_yield の対象外で auto-approve。第三者が区間内で話す／頭尾・笑い付近は review。回帰: 20261026 host 1609.06「私なんか」/ guest_a「まあでもなんか」→ host「どうぞ」→ guest_a 1612.26 再開（v8 26:03）。
