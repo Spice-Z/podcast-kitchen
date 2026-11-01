@@ -75,6 +75,7 @@ align:
   min_segment_score: 0.5
 
 text:
+  yield_markers: [どうぞ, ごめん, すみません, すいません, お先に]
   # fugashi + unidic-lite (pinned in requirements). A token is a filler only if its POS1 is in filler_pos
   filler_pos: [フィラー, 感動詞]
   fillers: [えー, えーと, えっと, えと, あー, あーの, あの, あのー, んー, ん, うーん, まあ, まー, そのー, えーっと, なんか]
@@ -94,7 +95,10 @@ candidates:
   acoustic_island_max_s: 0.8    # VAD island with no aligned text -> acoustic filler/backchannel candidate
   overlap_onset_s: 0.5
   yield_max_s: 1.5              # yielding speaker stops within this
-  continue_min_s: 2.0           # continuing speaker keeps talking at least this
+  continue_min_s: 2.0           # continuing speaker has at least this much speech in the next continue_window_s
+  continue_window_s: 4.0
+  yield_pre_silence_s: 1.0      # yielder was silent this long before (a turn start, not the end of their sentence)
+  yield_marker_window_s: 3.0    # mute only if the yielder says a yield marker (text.yield_markers) within this; else review
   false_start_window_s: 3
   false_start_min_kana: 3
   crosstalk_min_overlap_s: 2

@@ -37,8 +37,8 @@ def test_long_pause_before_laugh_goes_to_review(cfg):
 
 
 def test_overlap_yield_mutes_only_yielder(cfg):
-    v = vad({"host": [[40.0, 41.0]], "guest_a": [[40.2, 48.0]]}, dur=120)
-    w = {"host": [seg(40.0, 41.0, "それで僕が")], "guest_a": [seg(40.2, 48.0, "いやこれは長く続く話なんですけど")]}
+    v = vad({"host": [[40.0, 41.0], [42.0, 42.8]], "guest_a": [[40.2, 48.0]]}, dur=120)
+    w = {"host": [seg(40.0, 41.0, "それで僕が"), seg(42.0, 42.8, "どうぞどうぞ")], "guest_a": [seg(40.2, 48.0, "いやこれは長く続く話なんですけど")]}
     oy = [c for c in C.build(v, w, cfg) if c["type"] == "overlap_yield"]
     assert len(oy) == 1 and oy[0]["track"] == "host" and oy[0]["default_action"] == "mute"
     assert all(c["track"] != "guest_a" for c in oy)
@@ -61,4 +61,15 @@ def test_keys_are_stable(cfg):
 def test_head_tail_protected_goes_to_review(cfg):
     v = vad({"host": [[10.0, 11.0]], "guest_a": [[10.2, 18.0]]}, dur=120)
     w = {"host": [seg(10.0, 11.0, "それで僕が")], "guest_a": [seg(10.2, 18.0, "いやこれは長く続く話なんですけど")]}
+    assert [c["default_action"] for c in C.build(v, w, cfg) if c["type"] == "overlap_yield"] == ["review"]
+
+
+def test_overlap_without_marker_or_mid_turn_not_muted(cfg):
+    # finished phrase at the end of the speaker's own turn (no pre-silence) -> no candidate
+    v = vad({"guest_b": [[30.0, 39.4], [40.0, 41.0]], "guest_a": [[40.2, 48.0]]}, dur=120)
+    w = {"guest_b": [seg(30.0, 39.4, "こう言うと"), seg(40.0, 41.0, "それっぽくやってくる")], "guest_a": [seg(40.2, 48.0, "それ用のエージェントを作って任せる")]}
+    assert not [c for c in C.build(v, w, cfg) if c["type"] == "overlap_yield"]
+    # turn start but no yield marker -> review, never mute
+    v = vad({"guest_b": [[40.0, 41.0]], "guest_a": [[40.2, 48.0]]}, dur=120)
+    w = {"guest_b": [seg(40.0, 41.0, "そうだと思う本当に")], "guest_a": [seg(40.2, 48.0, "結構それができるスキルって大事")]}
     assert [c["default_action"] for c in C.build(v, w, cfg) if c["type"] == "overlap_yield"] == ["review"]

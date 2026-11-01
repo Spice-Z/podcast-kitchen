@@ -155,26 +155,33 @@ def backchannels(ctx):
 
 
 def overlap_yield(ctx):
-    out = []; c = ctx.c; bc = set(ctx.t["backchannels"])
+    """Two onsets within overlap_onset_s; the yielder (turn start: silent >= yield_pre_silence_s before) stops within
+    yield_max_s while the other keeps >= continue_min_s of speech. Only the yielder's own track is muted, and only
+    when the yielder then says a yield marker (どうぞ/ごめん...); otherwise review (it may be a finished phrase)."""
+    out = []; c = ctx.c; bc = set(ctx.t["backchannels"]); marks = ctx.t["yield_markers"]
     V = ctx.vad["speakers"]
     for y in ctx.spk:
+        prev_end = -1e9
         for a0, a1 in V[y]:
-            if a1 - a0 > c["yield_max_s"]:
+            pre, prev_end = a0 - prev_end, a1
+            if a1 - a0 > c["yield_max_s"] or pre < c["yield_pre_silence_s"]:
                 continue
             txt = ctx.excerpt(y, a0, a1)
-            if norm(txt) in bc or not txt:
+            if not txt or norm(txt) in bc or any(m in txt for m in marks):
                 continue
             for k in ctx.spk:
                 if k == y:
                     continue
-                for b0, b1 in V[k]:
-                    if abs(b0 - a0) <= c["overlap_onset_s"] and b1 - a1 >= c["continue_min_s"]:
-                        prot = ctx.protected_edge(a0, a1) or ctx.near_laugh(a0, a1, c["laugh_protect_s"])
-                        out.append(cand(ctx, "overlap_yield", y, a0, a1, "review" if prot else "mute",
-                                        f"{y} yields to {k} (onsets {abs(b0-a0):.2f}s apart); only {y}'s aborted phrase removed", 0.6))
-                        break
-                else:
+                hit = [(b0, b1) for b0, b1 in V[k] if abs(b0 - a0) <= c["overlap_onset_s"]]
+                if not hit or speech(V[k], hit[0][0], hit[0][0] + c["continue_window_s"]) < c["continue_min_s"]:
                     continue
+                after = ctx.excerpt(y, a1, a1 + c["yield_marker_window_s"])
+                marked = any(m in after for m in marks)
+                prot = ctx.protected_edge(a0, a1) or ctx.near_laugh(a0, a1, c["laugh_protect_s"])
+                act = "mute" if marked and not prot else "review"
+                why = (f"{y} yields to {k} (onsets {abs(hit[0][0]-a0):.2f}s apart" + (", then yield marker" if marked else ", no yield marker")
+                       + f"); only {y}'s aborted phrase on {y}'s track")
+                out.append(cand(ctx, "overlap_yield", y, a0, a1, act, why, 0.8 if marked else 0.4))
                 break
     return out
 

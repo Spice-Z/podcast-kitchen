@@ -25,7 +25,7 @@
 | `long_pause`（長すぎる沈黙と間） | 話者別 VAD 和集合のギャップ。同一話者内 > `candidates.long_pause.within_turn_min_s`(1.2 s)、話者交代 > `between_speakers_min_s`(1.5 s) | 中央を切り `target_s`(0.7 s) を残す（タイムライン cut、ルームトーン＋クロスフェード）。直後 `laugh_lookahead_s`(2 s) 以内に笑い/反応があれば **review**（オチ前・意図的な間は詰めない） |
 | `filler` | 形態素の品詞が `text.filler_pos`（フィラー/感動詞）かつ `text.fillers` に含まれ、前後に間がある。音響: テキストの無い短い VAD 島・アライナ棄却区間 | 他者無発話なら cut、他者発話中なら自トラック mute。低スコア・保護区間・音響のみは review |
 | `backchannel` | `text.backchannels` のみの短い発話が他者発話中 | 10 s に 1 つ・笑いへの反応は keep、他は自トラックのみ `render.duck_db`(-20 dB) duck。タイムラインは切らない |
-| `overlap_yield` | 発話開始差 ≤ `overlap_onset_s`、譲った側の島 ≤ `yield_max_s`、相手が ≥ `continue_min_s` 継続 | **譲った側の言いかけだけ** を自トラックで mute（ルームトーン）。継続話者は無傷 |
+| `overlap_yield` | 発話開始差 ≤ `overlap_onset_s`、譲った側は直前 `yield_pre_silence_s` 無音（ターン開始）かつ島 ≤ `yield_max_s`、相手が `continue_window_s` 内に ≥ `continue_min_s` 発話 | 直後に譲り表現（`text.yield_markers`）があれば **譲った側の言いかけだけ** を自トラックで mute（ルームトーン）。無ければ review。継続話者は無傷 |
 | `false_start` | かな n-gram の 2 語以内の繰り返し | 他者無発話なら cut 候補、それ以外は review |
 | `crosstalk` | 2 名以上 ≥ `crosstalk_min_s` 重なり | review |
 | `mistake` | `text.mistake_markers`（「ここカットで」等） | review |
