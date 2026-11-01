@@ -1,6 +1,6 @@
 """Step 6b/7: publish package for the Publisher bot. Copies <ep>/show_notes.md to out/show_notes.md and prints the
 handoff block: out/<slug>.mp3, out/show_notes.md, out/chapters.json, title (written by the editor from the episode
-content), publish time (default next Monday 07:00 JST, with the US Pacific equivalent) and artwork = show default.
+content), publish time (default next Monday 07:00 JST, with the Vancouver time (PT) equivalent from tzdata) and artwork = show default.
 The editor never uploads or publishes; this only writes inside the episode folder."""
 import argparse, json, shutil
 from datetime import datetime, timedelta
@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from common import load
 
-JST, PT = ZoneInfo("Asia/Tokyo"), ZoneInfo("America/Los_Angeles")
+JST, PT = ZoneInfo("Asia/Tokyo"), ZoneInfo("America/Vancouver")  # local tzdata decides the offset
 
 
 def next_publish(now=None, weekday=0, hour=7):
@@ -32,7 +32,7 @@ def package(ep, title=None, now=None):
     files = {"audio": ep / "out" / f"{slug}.mp3", "show_notes": ep / "out" / "show_notes.md", "chapters": ep / "out" / "chapters.json"}
     return {"files": {k: str(v) for k, v in files.items()}, "missing": [k for k, v in files.items() if not v.exists()],
             "title": title or "(editor: write the title from the episode content)",
-            "publish_at_jst": t.strftime("%Y-%m-%d %H:%M JST (%a)"), "publish_at_pt": t.astimezone(PT).strftime("%Y-%m-%d %H:%M %Z (%a)"),
+            "publish_at_jst": t.strftime("%Y-%m-%d %H:%M JST (%a)"), "publish_at_pt": t.astimezone(PT).strftime("%Y-%m-%d %H:%M") + " Vancouver time (PT) " + t.astimezone(PT).strftime("(%a)"),
             "artwork": "show default", "notes_copied": notes is not None}
 
 

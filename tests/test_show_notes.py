@@ -8,7 +8,8 @@ def test_next_publish_is_next_monday_7am_jst():
     assert t.strftime("%Y-%m-%d %H:%M %a") == "2026-11-02 07:00 Mon"
     t = SN.next_publish(datetime(2026, 11, 2, 7, 0, tzinfo=SN.JST))      # exactly at the slot -> next week
     assert t.strftime("%Y-%m-%d") == "2026-11-09"
-    assert t.astimezone(SN.PT).strftime("%Y-%m-%d %H:%M") == "2026-11-08 14:00"
+    exp = datetime(2026, 11, 9, 7, 0, tzinfo=SN.JST).astimezone(SN.PT)   # whatever local tzdata says
+    assert t.astimezone(SN.PT) == exp and str(SN.PT) == "America/Vancouver"
 
 
 def test_package_copies_show_notes_into_out(tmp_path):
@@ -18,3 +19,4 @@ def test_package_copies_show_notes_into_out(tmp_path):
     pk = SN.package(tmp_path, "タイトル")
     assert (tmp_path / "out/show_notes.md").read_text() == "# notes" and pk["missing"] == []
     assert pk["artwork"] == "show default" and pk["title"] == "タイトル" and "JST" in pk["publish_at_jst"]
+    assert "Vancouver time (PT)" in pk["publish_at_pt"] and "PST" not in pk["publish_at_pt"] and "PDT" not in pk["publish_at_pt"]

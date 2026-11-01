@@ -11,6 +11,6 @@ When the package is final (QA PASS, no pending review), hand it to the separate 
 2. Pass the Publisher:
    - paths: `out/<slug>.mp3`, `out/show_notes.md`, `out/chapters.json`
    - **title**: written by the editor from the episode content (main topics), not a placeholder
-   - **publish time**: default the next Monday 07:00 JST, given with its Pacific-time equivalent (e.g. Mon 07:00 JST = Sun 14:00 PST / 15:00 PDT); use another time only if the owner says so
+   - **publish time**: default the next Monday 07:00 JST, given with its Vancouver time (PT) equivalent converted with tzdata (`zoneinfo` America/Vancouver; never hardcode PST/PDT); use another time only if the owner says so
    - **artwork**: the show default
 3. No personal info in the handoff beyond what is in the show notes.
