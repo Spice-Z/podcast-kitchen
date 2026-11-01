@@ -7,14 +7,14 @@
 
 ```mermaid
 flowchart LR
-  Z[話者別MP3] --> I[ingest] --> S[sync] --> C[clean_dfn / clean_dynamics] --> L[level] --> V[vad] --> A[asr] --> K[align_kana]
+  Z[話者別MP3] --> I[ingest] --> S[sync] --> C[clean_dfn / clean_dynamics] --> L[level] --> V[vad] --> A[zencastr_transcript（ASR は任意フォールバック）] --> K[align_kana]
   K --> D[candidates] --> B[label_store seed] --> H{review_export / import}
   H --> E[label_store build → edits.json] --> R[render] --> N[loudness] --> P[chapters] --> Q[qa]
 ```
 
 ## 使い方
 ```bash
-./run_pipeline.sh EP prep --track host=host.mp3 --track guest_a=a.mp3 --track guest_b=b.mp3 [--transcript t.txt]
+./run_pipeline.sh EP prep --track host=host.mp3 --track guest_a=a.mp3 --track guest_b=b.mp3 [--transcript zencastr.csv --speaker 'Name=host' ...]
 # review: EP/work/review_labels.txt を Audacity で確認 → review_import.py / label_store.py set|approve
 ./run_pipeline.sh EP finish
 tools/determinism.sh OUTROOT - --track ...   # 2 回実行してハッシュ比較
@@ -22,7 +22,7 @@ tools/determinism.sh OUTROOT - --track ...   # 2 回実行してハッシュ比�
 エピソードフォルダはリポジトリ外に置く（音声・氏名・ID をコミットしない）。
 
 ## スクリプト（pipeline/）
-ingest · sync · clean_dfn · clean_dynamics · level · vad · asr · align_kana · candidates · label_store · review_export · review_import · render · loudness · chapters · qa（共通: common.py）。テスト: `pytest tests`。
+ingest · sync · clean_dfn · clean_dynamics · level · vad · zencastr_transcript · asr（フォールバック）· align_kana · candidates · label_store · review_export · review_import · render · loudness · chapters · qa（共通: common.py）。テスト: `pytest tests`。
 
 ## 環境
 - CPU Linux, ffmpeg 7.1.5 + libmp3lame 3.100 + libsoxr（ingest がバージョンを検証）

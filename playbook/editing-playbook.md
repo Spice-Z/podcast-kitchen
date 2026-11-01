@@ -14,7 +14,8 @@
 
 ## 2. VAD・文字起こし・アライメント
 - VAD は Silero のみ（`vad.*` 固定）。無音判定は **話者別 VAD の和集合** の一つだけ。
-- ASR: kotoba-whisper-v2.0（HF revision 固定, float32, beam 5, temperature `[0.0]` のみ）。フォールバック相当（低 logprob・高圧縮率）は `logs/asr_fallbacks.json` に記録。
+- 文字起こし: Zencastr の TSV（話者・発話開始時刻）を一次ソースとし、`zencastr_transcript.py` で話者トラックに割り当て、各発話を MMS_FA で整列して単語時刻を得る。kotoba ASR は既定で使わない（`asr.fallback: gaps` で未カバー区間のみ）。
+- ASR（フォールバック／CSV なし時）: kotoba-whisper-v2.0（HF revision 固定, float32, beam 5, temperature `[0.0]` のみ）。フォールバック相当（低 logprob・高圧縮率）は `logs/asr_fallbacks.json` に記録。
 - 漢字→かな: fugashi + unidic-lite で分かち書き・品詞、読みは pyopenjtalk（文単位）→ uroman → MMS_FA。セグメントスコア `align.min_segment_score` 未満は `low` とし、その上の候補は review。
 
 ## 3. 編集種別（`work/candidates.json` → `labels.json` → `work/edits.json`）
