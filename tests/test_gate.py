@@ -53,3 +53,62 @@ def test_bursts_counted_outside_speech_only():
     x[int(5 * SR):int(5.2 * SR)] += noise(0.2)
     assert G.bursts(x, SR, [], G_CFG) == 1
     assert G.bursts(x, SR, [[4.9, 5.3]], G_CFG) == 0
+
+
+def quiet(sec, seed=3):
+    return 1e-4 * np.random.default_rng(seed).standard_normal(int(sec * SR))
+
+
+def test_smeared_word_does_not_protect_sniff():
+    # regression 20261026 raw host 26.53-26.81: word aligned 20.23-26.91 but VAD speech ends at 23.68
+    x = quiet(30); x[int(20.2 * SR):int(23.7 * SR)] = tone(3.5); x[int(26.5 * SR):int(26.85 * SR)] = noise(0.35)
+    vad = {"speakers": {"a": [[20.23, 23.68], [26.53, 26.81]]}}
+    words = {"a": [{"start": 20.23, "end": 26.91, "text": "5年目に突入したというアイディトリオです", "status": "ok"}]}
+    rd = lambda a, b: x[int(a * SR):int(b * SR)]
+    reg, tr = G.speech_regions("a", vad, words, [], [], rd, SR, G_CFG, G.track_floor(x, SR))
+    assert not any(overl_any(reg, 26.4, 26.9))
+    assert max(b for a, b in reg) < 24.0                         # smear beyond VAD dropped; pad anchored to VAD end
+
+
+def overl_any(reg, a, b):
+    return [1 for p, q in reg if G.overl(a, b, p, q) > 0]
+
+
+def test_sniff_in_pad_after_word_end_is_muted():
+    # regression 20261026 raw host 39.4-39.8: unvoiced tail after VAD/word end inside the post-pad
+    x = quiet(45); x[int(37.7 * SR):int(39.42 * SR)] = tone(1.72); x[int(39.45 * SR):int(39.75 * SR)] = noise(0.3)
+    vad = {"speakers": {"a": [[37.7, 39.42]]}}
+    words = {"a": [{"start": 37.7, "end": 39.52, "text": "続けてるわけですね", "status": "ok"}]}
+    rd = lambda a, b: x[int(a * SR):int(b * SR)]
+    reg, tr = G.speech_regions("a", vad, words, [], [], rd, SR, G_CFG, G.track_floor(x, SR))
+    assert not overl_any(reg, 39.47, 39.73)
+    assert any(a <= 37.7 and b >= 39.4 for a, b in reg)
+
+
+def test_sniff_glued_to_vad_island_tail_is_muted_but_short_consonant_kept():
+    x = quiet(20); x[int(5 * SR):int(6.2 * SR)] = tone(1.2); x[int(6.2 * SR):int(6.5 * SR)] = noise(0.3)
+    x[int(10 * SR):int(11.2 * SR)] = tone(1.2); x[int(11.2 * SR):int(11.3 * SR)] = noise(0.1)   # final "-su"
+    vad = {"speakers": {"a": [[5.0, 6.5], [10.0, 11.3]]}}
+    words = {"a": [{"start": 5.0, "end": 6.2, "text": "ね", "status": "ok"}, {"start": 10.0, "end": 11.3, "text": "です", "status": "ok"}]}
+    rd = lambda a, b: x[int(a * SR):int(b * SR)]
+    reg, tr = G.speech_regions("a", vad, words, [], [], rd, SR, G_CFG, G.track_floor(x, SR))
+    assert not overl_any(reg, 6.3, 6.5) and any(a <= 6.0 and b >= 6.2 for a, b in reg)
+    assert any(a <= 10.0 and b >= 11.3 for a, b in reg)
+
+
+def test_laugh_inside_region_not_muted_by_subwindow():
+    x = quiet(10); x[int(2 * SR):int(3 * SR)] = tone(1.0); x[int(3.1 * SR):int(3.4 * SR)] = noise(0.3)
+    vad = {"speakers": {"a": [[2.0, 3.0]]}}
+    rd = lambda a, b: x[int(a * SR):int(b * SR)]
+    reg, tr = G.speech_regions("a", vad, {"a": [{"start": 2.0, "end": 3.0, "text": "あ", "status": "ok"}]}, [],
+                               [(3.1, 3.4, "a")], rd, SR, G_CFG, G.track_floor(x, SR))
+    assert any(a <= 3.1 and b >= 3.4 for a, b in reg)
+
+
+def test_roomtone_window_is_burst_free():
+    from render import roomtone
+    x = quiet(20, 5) * 0.5
+    x[int(2 * SR):int(2.1 * SR)] += noise(0.1)              # sniff inside the otherwise quietest region
+    x[int(5 * SR):] += quiet(15, 6) * 2                     # slightly louder but clean region
+    _, t0 = roomtone(x, SR, [], 2.0)
+    assert not (t0 <= 2.1 and t0 + 2.0 >= 2.0)

@@ -14,25 +14,42 @@ from common import dump, load, load_cfg, log_step, read_wav, speakers, write_wav
 APPLY = ("cut", "duck", "mute")
 
 
-def roomtone(x, sr, isl, secs):
+def roomtone(x, sr, isl, secs, rise_db=15, floor_min_db=-80):
+    """Quietest VAD-free window of `secs` that is also burst-free (no 10 ms frame more than rise_db above the
+    track noise floor, the gate QA burst threshold) -> (tone, start_s). Falls back to the quietest VAD-free window,
+    then the quietest window regardless."""
     n = int(secs * sr); hop = int(0.1 * sr)
     mask = np.ones(len(x), bool)
     for s, e in isl:
         mask[max(0, int((s - 0.1) * sr)):int((e + 0.1) * sr)] = False
-    # frame-level sums on the hop grid (memory: no full-length cumsum; same candidate windows as before)
     m = len(x) // hop; k = max(1, n // hop)
-    fe = np.zeros(m)
+    fe = np.zeros(m); fpk = np.zeros(m); fr = max(1, int(0.01 * sr))
     for c0 in range(0, m, 100000):
-        c1 = min(m, c0 + 100000); fe[c0:c1] = (x[c0 * hop:c1 * hop].astype(np.float64) ** 2).reshape(c1 - c0, hop).sum(1)
+        c1 = min(m, c0 + 100000); blk = x[c0 * hop:c1 * hop].astype(np.float64)
+        fe[c0:c1] = (blk ** 2).reshape(c1 - c0, hop).sum(1)
+        p10 = (blk[: (len(blk) // fr) * fr] ** 2).reshape(-1, fr).mean(1)
+        per = hop // fr
+        fpk[c0:c1] = p10[: (c1 - c0) * per].reshape(c1 - c0, per).max(1)
+    db10 = 10 * np.log10(fpk + 1e-12)
+    fdb = 10 * np.log10(fe / hop + 1e-12)
+    ref = np.percentile(fdb[fdb > -119], 10) if np.any(fdb > -119) else -120
+    hot = db10 > max(ref, floor_min_db) + rise_db
     fb = (~mask[: m * hop]).reshape(m, hop).any(1)
     cs = np.concatenate([[0], np.cumsum(fe)]); bad = np.concatenate([[0], np.cumsum(fb)])
-    best, bi = None, 0
+    hc = np.concatenate([[0], np.cumsum(hot)])
+    best, bi, best2, bi2 = None, 0, None, 0
     for j in range(0, max(1, m - k)):
         if bad[j + k] - bad[j]:
             continue
         e = cs[j + k] - cs[j]
+        if best2 is None or e < best2:
+            best2, bi2 = e, j * hop
+        if hc[j + k] - hc[j]:
+            continue
         if best is None or e < best:
             best, bi = e, j * hop
+    if best is None:
+        best, bi = best2, bi2
     if best is None:  # no VAD-negative window: quietest window regardless
         e = cs[k:] - cs[:-k]; bi = int(np.argmin(e)) * hop
     return x[bi:bi + n].copy(), bi / sr
@@ -140,7 +157,7 @@ def main():
     tones = {}
     for s in spk:  # room tone always from the ungated levelled track (a gated track's quiet parts are digital silence)
         x, sr = read_wav(ep / "work/level" / f"{s}.wav")
-        tones[s] = roomtone(x, sr, vad["speakers"][s], c["roomtone_s"]); del x
+        tones[s] = roomtone(x, sr, vad["speakers"][s], c["roomtone_s"], cfg.get("gate", {}).get("transient_rise_db", 15), cfg.get("gate", {}).get("noise_floor_min_db", -80)); del x
     for s in spk:
         x, sr = read_wav(ep / ("work/gate" if gated else "work/level") / f"{s}.wav"); tracks[s] = x
     n = min(len(x) for x in tracks.values()); tracks = {k: v[:n] for k, v in tracks.items()}
