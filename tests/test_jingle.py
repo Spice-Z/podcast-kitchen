@@ -114,3 +114,20 @@ def test_dry_run_and_skips(tmp_path, monkeypatch, capsys):
     ep2, v2 = make_ep(tmp_path / "x", file="/nonexistent.mp3")
     run(ep2, monkeypatch)
     assert "WARNING" in capsys.readouterr().err and sf.info(str(ep2 / "work/mix.wav")).frames == len(v2)
+
+
+def test_middle_range_preferred_over_better_ranked_edge_chapter():
+    p = {**P, "prefer_range_frac": [0.3, 0.7], "widen_step_frac": 0.1}
+    gs = [(20.0, 21.0, True), (55.0, 55.5, False), (85.0, 86.0, True)]
+    g, why = J.choose(gs, [21.5, 86.5], 100.0, p)              # chapters only at 21/86, outside 30-70
+    assert g[0] == 55.0 and "tier 0" in why and why.startswith("no usable chapter")
+
+
+def test_widens_stepwise_and_keeps_quality_within_tier():
+    p = {**P, "prefer_range_frac": [0.4, 0.6], "widen_step_frac": 0.1}
+    gs = [(25.0, 27.0, True), (33.0, 33.5, False), (68.0, 68.4, True)]
+    g, why = J.choose(gs, [68.5], 100.0, p)                    # tier 1 = 30-70: chapter at 68 beats the 33 pause
+    assert g[0] == 68.0 and "chapter" in why and "tier 1" in why
+    g, why = J.choose([(12.0, 13.0, True)], [], 100.0, p)      # only reachable at tier 3 (10-90)
+    assert g[0] == 12.0 and "tier 3" in why
+    assert [t[0] for t in J.tiers(100.0, p)] == [0, 1, 2, 3, 4]

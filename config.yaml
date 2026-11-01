@@ -138,6 +138,8 @@ render:
 
 jingle:                         # mid-show jingle, inserted ONCE (pipeline/jingle.py; after render, before ending_bgm)
   enabled: true
+  prefer_range_frac: [0.3, 0.7]  # search this part of the edited show first (fractions of duration)
+  widen_step_frac: 0.1          # nothing there -> widen both sides by this per step (min_start_s/exclude_end_s still apply)
   file: ../../assets/jingle.mp3 # absolute, or relative to the episode dir; audio is never committed to the repo
   pre_silence_s: 0.4            # last speech end -> this much digital silence -> jingle
   post_silence_s: 0.2           # jingle -> this much silence -> speech resumes (the original gap is replaced)

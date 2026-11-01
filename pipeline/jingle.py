@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from common import dump, load, load_cfg, log_step, r, speakers
 
-DEF = {"enabled": True, "file": "../../assets/jingle.mp3", "pre_silence_s": 0.4, "post_silence_s": 0.2, "gain_db": -2.0,
+DEF = {"enabled": True, "prefer_range_frac": [0.3, 0.7], "widen_step_frac": 0.1, "file": "../../assets/jingle.mp3", "pre_silence_s": 0.4, "post_silence_s": 0.2, "gain_db": -2.0,
        "voice_ref_window_s": 60.0, "min_gap_s": 0.35, "min_start_s": 120.0, "exclude_end_s": 180.0, "chapter_before_s": 20.0,
        "chapter_after_s": 5.0, "avoid_margin_s": 1.0, "edge_fade_ms": 10.0, "segment_tolerance_s": 0.3}
 
@@ -77,7 +77,30 @@ def gaps(islands, segs, avoid, lo, hi, min_gap, margin, tol=0.3):
     return out
 
 
+def tiers(dur, p):
+    """[(k, lo_s, hi_s)]: prefer_range_frac of the edited duration first, widened by widen_step_frac per tier
+    until it covers the whole show (the hard min_start_s / exclude_end_s limits are applied by gaps())."""
+    lo, hi = p.get("prefer_range_frac", [0.3, 0.7]); st = max(float(p.get("widen_step_frac", 0.1)), 1e-3)
+    out, k = [], 0
+    while True:
+        a, b = max(0.0, lo - k * st), min(1.0, hi + k * st)
+        out.append((k, a * dur, b * dur))
+        if a <= 0 and b >= 1:
+            return out
+        k += 1
+
+
 def choose(gs, chapters, dur, p):
+    """-> (gap, reason). Tiered: candidates inside the preferred middle range first, widening stepwise;
+    within a tier chapter boundary > natural pause."""
+    for k, a, b in tiers(dur, p):
+        g, why = choose_in([x for x in gs if a <= x[0] <= b], [c for c in chapters if a <= c <= b], dur, p)
+        if g:
+            return g, f"{why}; range tier {k} ({a / 60:.1f}-{b / 60:.1f} min)"
+    return None, "no qualifying pause"
+
+
+def choose_in(gs, chapters, dur, p):
     """-> (gap, reason). chapters: edited chapter starts (excluding the opening)."""
     mid = dur / 2
     for c in sorted(chapters, key=lambda c: abs(c - mid)):
