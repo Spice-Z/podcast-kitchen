@@ -178,7 +178,9 @@ def overlap_yield(ctx):
                 after = ctx.excerpt(y, a1, a1 + c["yield_marker_window_s"])
                 marked = any(m in after for m in marks)
                 prot = ctx.protected_edge(a0, a1) or ctx.near_laugh(a0, a1, c["laugh_protect_s"])
-                act = "mute" if marked and not prot else "review"
+                # real-episode QA: yielders said ごめん after COMPLETE phrases (おめでとうございます, 使ってくれる人多いから),
+                # so a marker does not prove the phrase was aborted -> never auto-mute; marker only raises confidence
+                act = "review"
                 why = (f"{y} yields to {k} (onsets {abs(hit[0][0]-a0):.2f}s apart" + (", then yield marker" if marked else ", no yield marker")
                        + f"); only {y}'s aborted phrase on {y}'s track")
                 out.append(cand(ctx, "overlap_yield", y, a0, a1, act, why, 0.8 if marked else 0.4))
@@ -207,14 +209,17 @@ def false_starts(ctx):
                     if ws[j]["start"] - ws[i]["start"] > c["false_start_window_s"]:
                         break
                     if "".join(w["kana"] for w in ws[j:j + n]) == k1 and ws[j]["start"] - ws[i + n - 1]["end"] < 1.5:
-                        hit = (ws[i]["start"], ws[j]["start"]); break
+                        # only an immediate restart (nothing but fillers between) is a confident false start;
+                        # 'X-というか Y-というか' / 'AIなのか人間なのか' are parallel structure, cutting changes meaning
+                        imm = all(norm(w["surface"]) in BC_FL for w in ws[i + n:j])
+                        hit = (ws[i]["start"], ws[j]["start"], imm); break
                 if hit:
                     break
             if hit:
-                t0, t1 = hit
-                tl = ctx.others(s, t0, t1) == 0 and not ctx.protected_edge(t0, t1) and not ctx.near_laugh(t0, t1, c["laugh_protect_s"])
+                t0, t1, imm = hit
+                tl = imm and ctx.others(s, t0, t1) == 0 and not ctx.protected_edge(t0, t1) and not ctx.near_laugh(t0, t1, c["laugh_protect_s"])
                 out.append(cand(ctx, "false_start", TIMELINE if tl else s, t0, t1, "cut" if tl else "review",
-                                "repeated phrase within window; first attempt", 0.5))
+                                "immediate restart; first attempt" if imm else "repeated phrase with words between (parallel structure?)", 0.5 if imm else 0.3))
                 i = next((m for m, w in enumerate(ws) if w["start"] >= t1), len(ws))
             else:
                 i += 1
