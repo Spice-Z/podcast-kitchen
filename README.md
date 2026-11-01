@@ -1,4 +1,4 @@
-# podcast-editing
+# podcast-kitchen
 
 **English:** Scripts, thin agent skills and a playbook for editing a Japanese multi-speaker podcast deterministically on a CPU-only Linux box (Zencastr per-speaker tracks → clean → VAD/ASR/kana alignment → reviewable edit list → render → -16 LUFS / -1 dBTP → chapters → QA). Docs are in Japanese.
 
