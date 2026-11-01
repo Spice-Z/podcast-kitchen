@@ -136,6 +136,22 @@ render:
   roomtone_s: 2.0               # quietest VAD-negative 2 s of each track, looped
   mix: dual_mono                # mono sum, written as identical L/R
 
+jingle:                         # mid-show jingle, inserted ONCE (pipeline/jingle.py; after render, before ending_bgm)
+  enabled: true
+  file: ../../assets/jingle.mp3 # absolute, or relative to the episode dir; audio is never committed to the repo
+  pre_silence_s: 0.4            # last speech end -> this much digital silence -> jingle
+  post_silence_s: 0.2           # jingle -> this much silence -> speech resumes (the original gap is replaced)
+  gain_db: -2.0                 # jingle active level relative to the voices' active level
+  voice_ref_window_s: 60        # voice level measured over +-this around the insertion
+  min_gap_s: 0.35               # a candidate pause = gap in all speakers' VAD at least this long, between transcript segments
+  min_start_s: 120              # never in the first 2 min ...
+  exclude_end_s: 180            # ... nor in the last stretch (also never inside ending_bgm.search_window_s)
+  chapter_before_s: 20          # a chapter boundary (the one nearest the episode midpoint wins) uses the pause
+  chapter_after_s: 5            #   nearest it within [-before, +after]; else the longest sentence-end pause (speaker change preferred)
+  avoid_margin_s: 1.0           # keep this far from laughs / backchannels / overlaps (edits + laugh-like transcript text)
+  segment_tolerance_s: 0.3      # a transcript segment running > this past both gap edges = mid-sentence (rejected)
+  edge_fade_ms: 10              # fades on the voice either side of the insertion
+
 ending_bgm:                     # render stage, after mix, before loudness (pipeline/ending_bgm.py)
   enabled: true
   file: ../../assets/ending_bgm.mp3   # absolute, or relative to the episode dir; audio is never committed to the repo

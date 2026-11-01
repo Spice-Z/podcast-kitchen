@@ -48,7 +48,7 @@ def main():
     master.unlink(missing_ok=True); (ep / "work/prelimited.wav").unlink(missing_ok=True)
     (ep / "out" / f"{slug}_master.wav").unlink(missing_ok=True)
     if cfg.get("output", {}).get("delete_render_wavs", True):
-        (ep / "work/mix.wav").unlink(missing_ok=True); (ep / "work/mix_voice.wav").unlink(missing_ok=True)
+        (ep / "work/mix.wav").unlink(missing_ok=True); (ep / "work/mix_voice.wav").unlink(missing_ok=True); (ep / "work/mix_prejingle.wav").unlink(missing_ok=True)
         (ep / "work/.ending_bgm").unlink(missing_ok=True)
         for w in (ep / "work/render").glob("*.wav"): w.unlink()
     dump(ep / "logs/loudness.json", log)
