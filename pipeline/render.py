@@ -19,16 +19,22 @@ def roomtone(x, sr, isl, secs):
     mask = np.ones(len(x), bool)
     for s, e in isl:
         mask[max(0, int((s - 0.1) * sr)):int((e + 0.1) * sr)] = False
-    cs = np.concatenate([[0], np.cumsum(x ** 2)]); bad = np.concatenate([[0], np.cumsum(~mask)])
+    # frame-level sums on the hop grid (memory: no full-length cumsum; same candidate windows as before)
+    m = len(x) // hop; k = max(1, n // hop)
+    fe = np.zeros(m)
+    for c0 in range(0, m, 100000):
+        c1 = min(m, c0 + 100000); fe[c0:c1] = (x[c0 * hop:c1 * hop].astype(np.float64) ** 2).reshape(c1 - c0, hop).sum(1)
+    fb = (~mask[: m * hop]).reshape(m, hop).any(1)
+    cs = np.concatenate([[0], np.cumsum(fe)]); bad = np.concatenate([[0], np.cumsum(fb)])
     best, bi = None, 0
-    for i in range(0, max(1, len(x) - n), hop):
-        if bad[i + n] - bad[i]:
+    for j in range(0, max(1, m - k)):
+        if bad[j + k] - bad[j]:
             continue
-        e = cs[i + n] - cs[i]
+        e = cs[j + k] - cs[j]
         if best is None or e < best:
-            best, bi = e, i
+            best, bi = e, j * hop
     if best is None:  # no VAD-negative window: quietest window regardless
-        e = cs[n:] - cs[:-n]; bi = int(np.argmin(e[::hop])) * hop
+        e = cs[k:] - cs[:-k]; bi = int(np.argmin(e)) * hop
     return x[bi:bi + n].copy(), bi / sr
 
 
