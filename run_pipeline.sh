@@ -22,6 +22,7 @@ case $PHASE in
     step align_kana  $MAIN $P/align_kana.py --ep "$EP"
     step candidates  $MAIN $P/candidates.py --ep "$EP"
     step seed        $MAIN $P/label_store.py --ep "$EP" seed
+    step build       $MAIN $P/label_store.py --ep "$EP" build
     step export      $MAIN $P/review_export.py --ep "$EP"
     $MAIN $P/label_store.py --ep "$EP" status ;;
   finish)
