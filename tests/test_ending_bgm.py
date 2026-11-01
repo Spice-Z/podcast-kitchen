@@ -3,7 +3,8 @@ import pytest
 import ending_bgm as B
 
 SR = 8000
-P = {**B.DEF, "lead_in_s": 3.0, "fade_in_s": 2.0, "bed_db": -20.0, "ramp_s": 1.0, "tail_db": -4.0, "tail_s": 5.0, "fade_out_s": 3.0}
+P = {**B.DEF, "lead_in_s": 3.0, "fade_in_s": 2.0, "bed_db": -20.0, "ramp_s": 1.0, "tail_db": -4.0, "tail_s": 5.0, "fade_out_s": 3.0,
+     "fade_out_floor_db": -60.0, "end_silence_s": 1.5}
 
 
 def test_find_phrase_last_occurrence_in_window_uses_token_start():
@@ -35,14 +36,15 @@ def test_mix_bgm_envelope_levels_and_extension():
     vdb = B.active_rms_db(voice[:20 * SR], SR)
     y, info = B.mix_bgm(voice, bgm, SR, 12.0, 20.0, P, vdb)
     assert info["fade_in_start_s"] == pytest.approx(9.0)
-    assert info["end_s"] == pytest.approx(28.0, abs=0.01) and info["extended_s"] == pytest.approx(7.5, abs=0.01)
+    assert info["fade_out_end_s"] == pytest.approx(28.0, abs=0.01)
+    assert info["end_s"] == pytest.approx(29.5, abs=0.01) and info["extended_s"] == pytest.approx(9.0, abs=0.01)
     added = y.copy(); added[:len(voice)] -= voice
     seg = lambda a, b: added[int(a * SR):int(b * SR)]
     assert np.max(np.abs(seg(0, 8.99))) == 0                                  # nothing before the lead-in
     assert db(seg(12, 19)) - vdb == pytest.approx(-20, abs=0.5)               # ducked bed under the voices
     assert db(seg(21.5, 24.5)) - vdb == pytest.approx(-4, abs=0.5)            # BGM-only level after the last speech
     assert db(seg(9.0, 9.5)) < db(seg(10.5, 11.0))                            # fade-in
-    assert np.max(np.abs(y[-int(0.05 * SR):])) < 0.02                         # faded out at the end
+    assert np.all(y[-int(1.5 * SR):] == 0)                                    # end_silence_s of digital silence
 
 
 def make_ep(tmp_path, text="ということで以上です", **bgm_cfg):
@@ -104,3 +106,17 @@ def test_qa_bed_click_score_separates_music_from_click():
     assert click_score_bed(music, i, SR) < 2.5
     clicked = music.copy(); clicked[i:] += 0.3
     assert click_score_bed(clicked, i, SR) > 2.5
+
+
+def test_fade_out_is_db_linear_monotonic_and_reaches_floor():
+    p = {**P, "fade_out_s": 7.0, "end_silence_s": 1.5}
+    g, n = B.envelope(10 * SR, SR, 1.0, 10.0, p)               # tail hold 10..15 s, fade 15..22 s, silence 22..23.5 s
+    assert n == int(np.ceil(23.5 * SR))
+    fade = g[15 * SR:22 * SR]
+    assert np.all(np.diff(fade) <= 1e-12)                      # monotonic non-increasing
+    gdb = 20 * np.log10(fade)
+    assert gdb[0] == pytest.approx(-4.0, abs=0.01)
+    assert gdb[-1] <= -60.0 + 0.01                             # reaches the floor at the fade end
+    mid = 20 * np.log10(g[int(18.5 * SR)])
+    assert mid == pytest.approx(-32.0, abs=0.05)               # linear in dB: halfway = midpoint dB
+    assert np.all(g[22 * SR:] == 0) and len(g[22 * SR:]) == int(1.5 * SR)

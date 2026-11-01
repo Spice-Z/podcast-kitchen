@@ -149,7 +149,9 @@ ending_bgm:                     # render stage, after mix, before loudness (pipe
   ramp_s: 1.5                   # after the last speech end (all speakers), ramp bed -> tail level
   tail_db: -4                   # BGM-only level, dB relative to the voices' active level
   tail_s: 5.0                   # BGM-only time after the last speech end (incl. ramp)
-  fade_out_s: 3.0
+  fade_out_s: 7.0               # fade-out, linear in dB (exponential in amplitude) from tail_db ...
+  fade_out_floor_db: -60        # ... down to this (dB re voice active level), then gain 0
+  end_silence_s: 1.5            # digital silence appended after the fade (QA edge/tail checks stop at the fade start)
   bgm_offset_s: 0.0             # start position inside the BGM file
 
 loudness:                       # one tool: ffmpeg loudnorm two-pass, must be linear

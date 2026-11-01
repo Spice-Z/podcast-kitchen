@@ -3,7 +3,8 @@ Finds the last closing phrase (ending_bgm.phrases, e.g. 「ということで」
 ending_bgm.search_window_s of the end, fades the BGM in lead_in_s before it (over fade_in_s), keeps it as a bed
 bed_db below the voices' active level, and after the last speech end on the edited timeline (all speakers) ramps it
 to tail_db (relative to the same voice level) over ramp_s, plays BGM alone for tail_s, then fades out over
-fade_out_s. The episode is extended as needed. Rewrites work/mix.wav (the voice-only mix is kept as
+fade_out_s linearly in dB (exponential in amplitude) down to fade_out_floor_db (re voice), cuts to 0 and appends
+end_silence_s of digital silence. The episode is extended as needed. Rewrites work/mix.wav (the voice-only mix is kept as
 work/mix_voice.wav so re-running never stacks BGM). Skips with a warning when disabled, the file is missing or no
 phrase is found. Log: logs/ending_bgm.json; timemap.json gets "ending_bgm" and the new edited_duration_s."""
 import argparse, os, subprocess, sys
@@ -13,7 +14,7 @@ from common import dump, load, load_cfg, log_step, r, read_wav, speakers
 
 DEF = {"enabled": True, "file": "../../assets/ending_bgm.mp3", "phrases": ["ということで"], "search_window_s": 120.0,
        "lead_in_s": 3.0, "fade_in_s": 2.0, "bed_db": -20.0, "ramp_s": 1.5, "tail_db": -4.0, "tail_s": 5.0,
-       "fade_out_s": 3.0, "bgm_offset_s": 0.0, "voice_ref_window_s": 60.0, "min_island_s": 0.2}
+       "fade_out_s": 7.0, "fade_out_floor_db": -60.0, "end_silence_s": 1.5, "bgm_offset_s": 0.0, "voice_ref_window_s": 60.0, "min_island_s": 0.2}
 
 
 def map_time(tm, t):
@@ -64,9 +65,10 @@ def active_rms_db(x, sr):
 
 def envelope(n, sr, t_in, t_end, p):
     """-> (amplitude gain per sample relative to the voice-matched BGM, total length). Silence before t_in, linear
-    fade-in to bed_db, bed until t_end, ramp to tail_db over ramp_s, hold until t_end + tail_s, linear fade-out."""
+    fade-in to bed_db, bed until t_end, ramp to tail_db over ramp_s, hold until t_end + tail_s, fade-out linear in dB
+    from tail_db to fade_out_floor_db over fade_out_s, then 0 (incl. end_silence_s of digital silence)."""
     t_ph_end = t_end + p["tail_s"]; t_stop = t_ph_end + p["fade_out_s"]
-    n_total = max(n, int(np.ceil(t_stop * sr)))
+    n_total = max(n, int(np.ceil((t_stop + p["end_silence_s"]) * sr)))
     t = np.arange(n_total) / sr
     bed, tail = p["bed_db"], p["tail_db"]
     lin = lambda a, b, ga, gb: ga + (gb - ga) * np.clip((t - a) / max(b - a, 1e-9), 0, 1)
@@ -78,7 +80,7 @@ def envelope(n, sr, t_in, t_end, p):
     up = (t >= t_end) & (t < t_ph_end)
     g_amp[up] = 10 ** (lin(t_end, t_end + p["ramp_s"], bed, tail)[up] / 20)
     fo = (t >= t_ph_end) & (t < t_stop)
-    g_amp[fo] = 10 ** (tail / 20) * (1 - (t[fo] - t_ph_end) / p["fade_out_s"])
+    g_amp[fo] = 10 ** ((tail + (p["fade_out_floor_db"] - tail) * (t[fo] - t_ph_end) / p["fade_out_s"]) / 20)
     return g_amp, n_total
 
 
@@ -94,7 +96,7 @@ def mix_bgm(voice, bgm, sr, t_phrase, t_end, p, voice_db):
     out = np.zeros(n_total); out[:len(voice)] = voice
     out += seg * g
     return out, {"fade_in_start_s": r(t_in), "last_speech_end_s": r(t_end), "tail_end_s": r(t_end + p["tail_s"]),
-                 "end_s": r(n_total / sr), "extended_s": r((n_total - len(voice)) / sr), "bgm_short": bool(k < n_total - i0)}
+                 "fade_out_end_s": r(t_end + p["tail_s"] + p["fade_out_s"]), "end_s": r(n_total / sr), "extended_s": r((n_total - len(voice)) / sr), "bgm_short": bool(k < n_total - i0)}
 
 
 def decode(path, sr):
@@ -155,7 +157,7 @@ def main():
     ref = tail[max(0, int((t_end - p["voice_ref_window_s"] - t0s) * sr)):int((t_end - t0s) * sr)]
     vdb = active_rms_db(ref, sr)
     y, info = mix_bgm(tail, decode(f, sr), sr, hit[0] - t0s, t_end - t0s, p, vdb)
-    for k in ("fade_in_start_s", "last_speech_end_s", "tail_end_s", "end_s"):
+    for k in ("fade_in_start_s", "last_speech_end_s", "tail_end_s", "fade_out_end_s", "end_s"):
         info[k] = r(info[k] + t0s)
     write(y, i0)
     info.update({"applied": True, "phrase": hit[1], "phrase_s": r(hit[0]), "phrase_text": hit[2], "voice_active_db": r(vdb, 1),

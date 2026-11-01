@@ -79,11 +79,13 @@ def main():
         if click: fails.append(f"click@{jn['out_s']}")
     res["joins"] = joins
     hs = int(q["head_tail_s"] * sr)
-    head, tail = longest_silence(x[:hs], sr), longest_silence(x[-hs:], sr)
+    # with the ending BGM the deliberate fade-out + end_silence_s is the end; tail/edge checks stop at the fade start
+    xe = x[:int(bgm["tail_end_s"] * sr)] if bgm and "tail_end_s" in bgm else x
+    head, tail = longest_silence(x[:hs], sr), longest_silence(xe[-hs:], sr)
     res["head_tail"] = {"head_longest_silence_s": r(head, 2), "tail_longest_silence_s": r(tail, 2),
                         "pass": bool(head <= q["head_tail_max_silence_s"] and tail <= q["head_tail_max_silence_s"])}
     if not res["head_tail"]["pass"]: fails.append("head_tail")
-    lead, trail = edge_silence(x, sr), edge_silence(x[::-1], sr)
+    lead, trail = edge_silence(x, sr), edge_silence(xe[::-1], sr)
     res["edge_silence"] = {"lead_s": r(lead, 2), "trail_s": r(trail, 2), "pass": bool(max(lead, trail) <= q["edge_max_silence_s"])}
     if not res["edge_silence"]["pass"]: fails.append("edge_silence")
     edits = load(ep / "work/edits.json"); vad = load(ep / "work/vad.json")
