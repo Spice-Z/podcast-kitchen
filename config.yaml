@@ -136,6 +136,22 @@ render:
   roomtone_s: 2.0               # quietest VAD-negative 2 s of each track, looped
   mix: dual_mono                # mono sum, written as identical L/R
 
+ending_bgm:                     # render stage, after mix, before loudness (pipeline/ending_bgm.py)
+  enabled: true
+  file: ../../assets/ending_bgm.mp3   # absolute, or relative to the episode dir; audio is never committed to the repo
+  phrases: ["ということで"]       # closing phrase(s); the LAST occurrence within search_window_s of the end is used
+  search_window_s: 120
+  lead_in_s: 3.0                # BGM fade-in starts this long before the phrase
+  fade_in_s: 2.0
+  bed_db: -20                   # bed level under the voices, dB relative to the voices' active level (-18 .. -22)
+  voice_ref_window_s: 60        # voice active level measured over this long before the last speech end
+  min_island_s: 0.2             # VAD islands shorter than this don't count as the last speech
+  ramp_s: 1.5                   # after the last speech end (all speakers), ramp bed -> tail level
+  tail_db: -4                   # BGM-only level, dB relative to the voices' active level
+  tail_s: 5.0                   # BGM-only time after the last speech end (incl. ramp)
+  fade_out_s: 3.0
+  bgm_offset_s: 0.0             # start position inside the BGM file
+
 loudness:                       # one tool: ffmpeg loudnorm two-pass, must be linear
   target_lufs: -16
   max_true_peak_dbtp: -1.0

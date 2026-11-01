@@ -56,6 +56,11 @@
 - ルームトーン: 各トラックの VAD 外で最も静かな `render.roomtone_s` 秒窓をクロスフェードでループ。
 - `work/timemap.json`（raw→編集後）を保存。出力はモノラルミックスを L/R 同一にした **デュアルモノ**。
 
+## 6b. エンディング BGM（pipeline/ending_bgm.py、render の後・loudness の前）
+- 編集後トランスクリプトの末尾 `search_window_s`（120 s）以内で最後の締めフレーズ（`phrases`、既定「ということで」）を探し、その `lead_in_s`（3 s）前から `fade_in_s`（2 s）でフェードイン。
+- 声の下では声のアクティブレベル比 `bed_db`（−20 dB、目安 −18〜−22）。最後の発話終了（全話者の VAD）後 `ramp_s`（1.5 s）で `tail_db`（−4 dB）へ上げ、発話終了から `tail_s`（5 s）BGM のみ、`fade_out_s`（3 s）でフェードアウト。尺は必要なだけ延長。
+- 音源はリポジトリに入れない（`file` でパス指定）。無効・音源なし・フレーズなしは警告してスキップ（声のミックスはそのまま）。再実行しても BGM は重ならない（`work/mix_voice.wav` から作り直す）。
+
 ## 7. ラウドネス（pipeline/loudness.py：唯一のラウドネスツール）
 - ffmpeg loudnorm 2 パス、`linear=true`。線形にならなければ停止。予測 TP が `loudness.max_true_peak_dbtp - limiter_headroom_db` を超える場合のみ事前に alimiter。
 - 目標 **-16 LUFS ±`qa.lufs_tolerance`、TP ≤ -1.0 dBTP**（納品物の MP3 を QA で測定）。

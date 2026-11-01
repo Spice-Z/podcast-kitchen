@@ -2,7 +2,7 @@
 pass 1 measure -> if the linear gain would push true peak above (max_true_peak - limiter_headroom),
 pre-limit with alimiter at the needed ceiling and re-measure -> pass 2 linear=true. Fails if ffmpeg
 reports normalization_type != linear. Deliverable: out/<slug>.mp3 only (LAME CBR, 44.1k stereo). The normalized
-WAV is a temp file in work/ deleted after encoding, as are prelimited.wav and (with output.delete_render_wavs) mix.wav + work/render/*.wav and logs/loudness.json."""
+WAV is a temp file in work/ deleted after encoding, as are prelimited.wav and (with output.delete_render_wavs) mix.wav, mix_voice.wav + work/render/*.wav and logs/loudness.json."""
 import argparse, json, re
 from pathlib import Path
 from common import dump, load, load_cfg, log_step, run, r
@@ -48,7 +48,8 @@ def main():
     master.unlink(missing_ok=True); (ep / "work/prelimited.wav").unlink(missing_ok=True)
     (ep / "out" / f"{slug}_master.wav").unlink(missing_ok=True)
     if cfg.get("output", {}).get("delete_render_wavs", True):
-        (ep / "work/mix.wav").unlink(missing_ok=True)
+        (ep / "work/mix.wav").unlink(missing_ok=True); (ep / "work/mix_voice.wav").unlink(missing_ok=True)
+        (ep / "work/.ending_bgm").unlink(missing_ok=True)
         for w in (ep / "work/render").glob("*.wav"): w.unlink()
     dump(ep / "logs/loudness.json", log)
     log_step(ep, "loudness", {"type": m2["normalization_type"]})
