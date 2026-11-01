@@ -101,6 +101,11 @@ def main():
     md.append(f"- joins: {len(joins)}, clicks: {sum(j['click'] for j in joins)}, level-jump flags: {sum(j['level_jump_flag'] for j in joins)}")
     md.append(f"- edge silence lead/trail: {res['edge_silence']['lead_s']} / {res['edge_silence']['trail_s']} s (max {q['edge_max_silence_s']})")
     md.append(f"- head/tail longest silence: {res['head_tail']['head_longest_silence_s']} / {res['head_tail']['tail_longest_silence_s']} s")
+    gl = ep / "logs/gate.json"
+    if gl.exists():
+        gj = load(gl); res["gate"] = {k: v for k, v in gj.items()}
+        md.append(f"- gate: non-speech bursts before/after: {gj['nonspeech_bursts_before']} / {gj['nonspeech_bursts_after']}; "
+                  + ", ".join(f"{s} {v['nonspeech_bursts_before']}->{v['nonspeech_bursts_after']} (transients {v['transients_classified']})" for s, v in gj['tracks'].items()))
     md.append(f"- long_pause: {res['long_pause']}")
     md.append(f"- edits: {res['edits']}")
     md.append(f"- removed total: {tm['removed_s']} s; chapters: {len(ch)}")

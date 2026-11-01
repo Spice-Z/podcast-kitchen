@@ -39,6 +39,7 @@ case $PHASE in
     $MAIN $P/label_store.py --ep "$EP" status ;;
   finish)
     step build       $MAIN $P/label_store.py --ep "$EP" build
+    step gate        $MAIN $P/gate.py --ep "$EP"
     step render      $MAIN $P/render.py --ep "$EP"
     step loudness    $MAIN $P/loudness.py --ep "$EP"
     step chapters    $MAIN $P/chapters.py --ep "$EP"

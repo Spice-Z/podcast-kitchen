@@ -5,7 +5,7 @@ Join: each cut boundary is snapped to the lowest-energy 5 ms frame of the summed
 render.snap_window_ms; at each join every track gets the same equal-power crossfade of
 render.crossfade_ms (per-track definition, no speaker-change special case).
 Room tone: quietest render.roomtone_s VAD-negative window of each track, looped with crossfades.
-Outputs work/render/<spk>.wav, work/mix.wav, work/timemap.json. Fails on unlabeled candidates."""
+Input: work/gate/<spk>.wav when gate.enabled (else work/level). Outputs work/render/<spk>.wav, work/mix.wav, work/timemap.json. Fails on unlabeled candidates."""
 import argparse
 from pathlib import Path
 import numpy as np
@@ -136,13 +136,15 @@ def main():
     spk = speakers(ep)
     tracks = {}
     sr = None
+    gated = (cfg.get("gate") or {}).get("enabled") and (ep / "work/gate/.done").exists()
+    tones = {}
+    for s in spk:  # room tone always from the ungated levelled track (a gated track's quiet parts are digital silence)
+        x, sr = read_wav(ep / "work/level" / f"{s}.wav")
+        tones[s] = roomtone(x, sr, vad["speakers"][s], c["roomtone_s"]); del x
     for s in spk:
-        x, sr = read_wav(ep / "work/level" / f"{s}.wav"); tracks[s] = x
+        x, sr = read_wav(ep / ("work/gate" if gated else "work/level") / f"{s}.wav"); tracks[s] = x
     n = min(len(x) for x in tracks.values()); tracks = {k: v[:n] for k, v in tracks.items()}
     fade_d = int(c["duck_fade_ms"] / 1000 * sr); cf = int(c["crossfade_ms"] / 1000 * sr)
-    tones = {}
-    for s in spk:
-        tones[s] = roomtone(tracks[s], sr, vad["speakers"][s], c["roomtone_s"])
     applied = [e for e in edits if e["approved"] and e["action"] in APPLY]
     for e in applied:
         if e["track"] == "all":

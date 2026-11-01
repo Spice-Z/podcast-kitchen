@@ -41,6 +41,11 @@
 - `review_export.py` → Audacity ラベル（`work/review_labels.txt`）→ 先頭に `OK`/`NG`/`cut`/`duck`/`mute`/`keep` を付けて `review_import.py`。
 - 判断が数値化できないもの（意味・笑い・意図的な間）は review に回し、文章判断で自動適用しない。
 
+## 5b. スピーチゲート（pipeline/gate.py、config `gate`）
+- クリーニング・レベル調整後、各トラックを**自分の発話区間以外ではミュート**（`attenuation_db`、既定 -inf、例 -40）。発話区間 = Silero VAD ∪ アライン済み文字起こし ∪ 笑い ∪ 相槌（これらは決してゲートしない）。前 150 ms / 後 250 ms のパッド、300 ms 未満の隙間は結合、10–20 ms フェード。
+- 文字なしの短い VAD 島（≤ `transient_max_s`）で無声（自己相関ピーク < `voicing_max`）またはスペクトル平坦（> `flatness_min`）なもの＝鼻すすり・咳・咳払いは VAD が反応してもゲート（笑い・相槌は除く）。
+- 全トラックがゲートされる区間は `fill_track` のルームトーンで埋め、ミックスがデジタル無音にならないようにする。QA 指標：非発話区間のバースト数（ゲート前/後、`logs/gate.json`）。
+
 ## 6. レンダリング（pipeline/render.py）
 - タイムライン cut は全トラック同時、ミックスの最小エネルギー 5 ms 点へ ±`render.snap_window_ms` でスナップ、`render.crossfade_ms` の等パワークロスフェード（全トラック同一）。
 - duck/mute はトラック内のみ（`render.duck_fade_ms`）。mute はルームトーン置換。
@@ -66,3 +71,6 @@
 - **edge_trim**：先頭/末尾の無音は `structure.edge_silence_s`（0.3 s）まで詰める。
 - ショーノート（概要・トピック・リンク・mm:ss チャプター）。リンク検索は任意で、確認していないものは **未確認** と明記。
 - 種別ごとの件数と削減秒、未適用の review 一覧。アップロード・公開・送信はしない。
+
+## リポジトリ運用（絶対ルール）
+- スキル・ポリシー・config・playbook の変更はすべてこのリポジトリにコミットし、**必ず GitHub に反映する**。コミット後に sha を報告し、push 権限/承認がある環境で push する（ローカルだけに残さない）。

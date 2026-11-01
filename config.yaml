@@ -165,3 +165,17 @@ structure:                      # edits built from structure, not labels (label_
 
 output:                         # MP3-only delivery: out/<slug>.mp3 (+ chapters.json); no WAV master
   delete_render_wavs: true      # delete work/mix.wav, work/render/*.wav after encoding
+
+gate:                           # per-track speech gating after cleaning/levelling (pipeline/gate.py)
+  enabled: true
+  attenuation_db: -inf          # outside own speech: "-inf" = full mute, or e.g. -40
+  pad_before_ms: 150
+  pad_after_ms: 250
+  merge_gap_ms: 300
+  fade_ms: 15                   # 10-20 ms
+  transient_max_s: 0.6          # VAD islands up to this long with no text/laugh/backchannel are checked
+  voicing_max: 0.35             # autocorr peak 80-400 Hz below this -> unvoiced -> transient (sniff/cough/throat-clear)
+  flatness_min: 0.3             # spectral flatness above this -> noise-like -> transient
+  fill_track: host              # room tone fill where every track is gated
+  transient_rise_db: 15         # QA metric: burst = frames this far above the track noise floor, outside speech
+  noise_floor_min_db: -80
