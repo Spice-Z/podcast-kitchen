@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import gate as G
 
 G_CFG = {"transient_max_s": 0.6, "voicing_max": 0.35, "flatness_min": 0.3, "pad_before_ms": 150, "pad_after_ms": 250,
@@ -43,9 +44,11 @@ def test_laugh_and_backchannel_never_gated():
 
 def test_gain_grid_mute_and_fades():
     gg = G.gain_grid([[1.0, 2.0]], 3.0, G_CFG)
-    assert gg[500] == 0 and gg[1500] == 1 and 0 < gg[1000] < 1 and gg[2500] == 0
+    import pytest
+    assert gg[500] == pytest.approx(0, abs=1e-9) and gg[1500] == pytest.approx(1, abs=1e-9)
+    assert 0 < gg[1000] < 1 and gg[2500] == pytest.approx(0, abs=1e-9)
     g40 = G.gain_grid([[1.0, 2.0]], 3.0, {**G_CFG, "attenuation_db": -40})
-    assert abs(g40[500] - 0.01) < 1e-9
+    assert g40[500] == pytest.approx(0.01, abs=1e-6)
 
 
 def test_bursts_counted_outside_speech_only():
@@ -198,6 +201,11 @@ def _real_cfg(spk, t0, t1, floor):
         pytest.skip("20261026 episode data not available")
     cfg = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), "..", "config.yaml")))["gate"]
     sr = sf.info(p).samplerate
+    full = sf.read(p, dtype="float64")[0]
+    if full.ndim > 1: full = full.mean(1)
+    allv = json.load(open(f"{EP}/work/vad.json"))["speakers"][spk]
+    rel = G.relative_burst(full, sr, allv, cfg, floor); del full
+    cfg = {**cfg, **{k: v for k, v in rel.items() if k.startswith("burst_")}}
     x = sf.read(p, start=int(t0 * sr), stop=int(t1 * sr), dtype="float64")[0]
     if x.ndim > 1: x = x.mean(1)
     rd = lambda a, b: x[max(0, int((a - t0) * sr)):max(0, int((b - t0) * sr))]
@@ -220,3 +228,36 @@ def test_real_20261026_host_ne_decay_kept_with_burst_rule():
 def test_real_20261026_guest_a_hum_kept_by_burst_rule():
     reg, tr = _real_cfg("guest_a", 330, 350, -86.1)
     assert any(a <= 341.63 and b >= 342.27 for a, b in reg)
+
+
+def test_relative_burst_thresholds_follow_track_levels():
+    cfg = {"burst_onset_snr_frac": 0.4, "burst_floor_min_db": 10, "burst_floor_max_db": 15, "burst_ns_margin_s": 0.3}
+    sr, rng = SR, np.random.default_rng(1)
+    def track(noise_db, speech_db):
+        x = 10 ** (noise_db / 20) * rng.standard_normal(10 * sr)
+        x[2 * sr:4 * sr] = 10 ** (speech_db / 20) * rng.standard_normal(2 * sr)
+        return x
+    for noise, speech in ((-90, -20), (-70, -20)):
+        x = track(noise, speech); fl = G.track_floor(x, sr)
+        rel = G.relative_burst(x, sr, [(2.0, 4.0)], cfg, fl)
+        assert rel["burst_onset_db"] == pytest.approx(0.4 * rel["snr_db"], abs=0.1)
+        assert rel["snr_db"] == pytest.approx(speech - noise, abs=3)
+        assert 10 <= rel["burst_floor_db"] <= 15
+    quiet = G.relative_burst(track(-90, -20), sr, [(2.0, 4.0)], cfg, G.track_floor(track(-90, -20), sr))
+    noisy = G.relative_burst(track(-70, -20), sr, [(2.0, 4.0)], cfg, G.track_floor(track(-70, -20), sr))
+    assert noisy["burst_onset_db"] < quiet["burst_onset_db"]           # noisier track -> lower onset requirement
+
+
+def test_real_20261026_relative_thresholds_per_track():
+    import json, os, yaml
+    sf = pytest.importorskip("soundfile")
+    cfg = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), "..", "config.yaml")))["gate"]
+    exp = {"host": (35.0, 15.0), "guest_a": (26.4, 14.0)}
+    for spk, (onset, margin) in exp.items():
+        p = f"{EP}/work/level/{spk}.wav"
+        if not os.path.exists(p):
+            pytest.skip("20261026 episode data not available")
+        x, sr = sf.read(p, dtype="float64")
+        if x.ndim > 1: x = x.mean(1)
+        rel = G.relative_burst(x, sr, json.load(open(f"{EP}/work/vad.json"))["speakers"][spk], cfg, G.track_floor(x, sr))
+        assert rel["burst_onset_db"] == pytest.approx(onset, abs=1.0) and rel["burst_floor_db"] == pytest.approx(margin, abs=1.0)

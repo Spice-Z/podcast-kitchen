@@ -133,6 +133,24 @@ def track_floor(x, sr):
     return float(np.percentile(db[db > -119], 10)) if np.any(db > -119) else -120.0
 
 
+def relative_burst(x, sr, islands, g, floor_db):
+    """Per-track cough thresholds from the track's own levels (10 ms frames):
+    onset = burst_onset_snr_frac x SNR (speech p50 - floor; speech = VAD frames above their own 20th percentile),
+    start margin = clamp(non-speech p90 - floor, burst_floor_min_db, burst_floor_max_db) (non-speech = frames
+    > burst_ns_margin_s away from any VAD island). -> dict to merge into the gate config."""
+    db = frame_db(x, sr); n = len(db)
+    near, sp = np.zeros(n, bool), np.zeros(n, bool); m = int(g.get("burst_ns_margin_s", 0.3) * 100)
+    for a, b in islands:
+        near[max(0, int(a * 100) - m):int(b * 100) + m] = True; sp[max(0, int(a * 100)):int(b * 100)] = True
+    spd, ns = db[sp], db[~near]
+    if len(spd) == 0 or len(ns) == 0:
+        return {}
+    spd = spd[spd > np.percentile(spd, 20)]
+    snr = float(np.percentile(spd, 50)) - floor_db
+    margin = float(np.clip(np.percentile(ns, 90) - floor_db, g.get("burst_floor_min_db", 10), g.get("burst_floor_max_db", 15)))
+    return {"burst_onset_db": r(g.get("burst_onset_snr_frac", 0.4) * snr, 1), "burst_floor_db": r(margin, 1), "snr_db": r(snr, 1)}
+
+
 def firm_text(a, b, txt):
     """True when a transcript word is plausibly carried by VAD island [a, b): a word that mostly lies inside the island.
     A long smeared word that merely reaches the island does not count (alignment smear over a sniff)."""
@@ -340,11 +358,15 @@ def main():
     laughs = laugh_spans(words, cfg["text"]["laugh_markers"])
     spk = speakers(ep); src = {s: ep / "work/level" / f"{s}.wav" for s in spk}
     sr = sf.info(str(src[spk[0]])).samplerate; n = min(sf.info(str(p)).frames for p in src.values()); dur = n / sr
-    regs, trans, grids = {}, {}, {}
+    regs, trans, grids, rel = {}, {}, {}, {}
     for s in spk:
         rd = lambda a_, b_, p=src[s]: sf.read(str(p), start=int(a_ * sr), stop=int(b_ * sr), dtype="float64")[0]
         fl = track_floor(sf.read(str(src[s]), frames=n, dtype="float64")[0], sr)
-        regs[s], trans[s] = speech_regions(s, vad, words, cands, laughs, rd, sr, g, fl)
+        gs, rel[s] = g, {}
+        if g.get("burst_relative", True):
+            rel[s] = relative_burst(sf.read(str(src[s]), frames=n, dtype="float64")[0], sr, vad["speakers"][s], g, fl)
+            gs = {**g, **{k: v for k, v in rel[s].items() if k.startswith("burst_")}}
+        regs[s], trans[s] = speech_regions(s, vad, words, cands, laughs, rd, sr, gs, fl)
         grids[s] = gain_grid(regs[s], dur, g)
     allg = np.prod([1 - gg for gg in grids.values()], axis=0)  # 1 where every track is gated
     fill = g.get("fill_track") or spk[0]
@@ -372,7 +394,7 @@ def main():
         sf.write(str(out / f"{s}.wav"), y, sr, subtype="FLOAT"); del y
         log["tracks"][s] = {"speech_s": r(sum(b - a for a, b in regs[s]), 1), "gated_s": r(dur - sum(b - a for a, b in regs[s]), 1),
                             "transients_classified": len(trans[s]), "transients_subwindow": sum(t.get("kind") == "subwindow" for t in trans[s]), "transients_edge": sum(t.get("kind") == "edge" for t in trans[s]), "transients_inner": sum(t.get("kind") == "inner" for t in trans[s]), "transients_burst": sum(t.get("kind") == "burst" for t in trans[s]), "nonspeech_bursts_before": before, "nonspeech_bursts_after": after,
-                            "roomtone_fill_s": r(filled, 1)}
+                            "roomtone_fill_s": r(filled, 1), "burst_thresholds": rel[s]}
     log["nonspeech_bursts_before"] = sum(v["nonspeech_bursts_before"] for v in log["tracks"].values())
     log["nonspeech_bursts_after"] = sum(v["nonspeech_bursts_after"] for v in log["tracks"].values())
     dump(out / "regions.json", {"regions": regs, "transients": trans})

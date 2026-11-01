@@ -192,9 +192,14 @@ gate:                           # per-track speech gating after cleaning/levelli
   edge_keep_s: 0.05             # kept next to the speech (word-final unvoiced consonants)
   burst_enabled: true          # cough / throat-clear rule (separate from sniff; band-independent)
   burst_max_s: 0.6              # island at most this long, no firm text, no laugh/backchannel
-  burst_onset_db: 30            # level rise within burst_onset_ms ...
+  burst_relative: true          # per track: onset = burst_onset_snr_frac x own SNR, start margin = clamp(own non-speech p90 - floor, min, max)
+  burst_onset_snr_frac: 0.4
+  burst_floor_min_db: 10
+  burst_floor_max_db: 15
+  burst_ns_margin_s: 0.3        # non-speech frames = this far from any VAD island
+  burst_onset_db: 30            # fallback when burst_relative is off: level rise within burst_onset_ms ...
   burst_onset_ms: 40
-  burst_floor_db: 10            # ... starting within this of the track noise floor
+  burst_floor_db: 10            # (fallback) ... starting within this of the track noise floor
   burst_voicing_max: 0.5        # unstable pitch: median 20 ms frame voicing below this ...
   burst_jump_max: 0.15          # ... or median frame-to-frame f0 jump above this
   burst_island_voicing_max: 0.6 # whole-island voicing at/above this = steady hum (んー), never a burst
