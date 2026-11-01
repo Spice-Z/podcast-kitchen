@@ -1,0 +1,136 @@
+# Single source of truth for every pipeline parameter.
+# Skills, playbook and scripts refer to keys here (e.g. `render.duck_db`), never restate values.
+# Any change must be noted in <episode>/logs/notes.md with a reason.
+version: 2
+
+env:
+  threads: 4                    # torch / ctranslate2 / OMP thread count (pinned for determinism)
+  venv_dfn_asr: /workspace/podcast/smoke/.venv   # py3.11 torch2.0.1: DeepFilterNet3 + faster-whisper
+  venv_main: /workspace/podcast/smoke/.venv2     # py3.11 torch2.8: everything else
+  ffmpeg_version: "7.1.5"       # checked by ingest.py (prefix match)
+  lame_version: "3.100"         # libmp3lame linked into ffmpeg (from dpkg)
+
+models:
+  asr: {repo: kotoba-tech/kotoba-whisper-v2.0-faster, revision: f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc}
+  dfn: {name: DeepFilterNet3, pip: "deepfilternet==0.5.6"}
+  vad: {name: silero, pip: "silero-vad==6.2.0"}
+  aligner: {name: torchaudio.pipelines.MMS_FA, pip: "torchaudio==2.8.0"}
+
+ingest:
+  sample_rate: 48000
+  codec: pcm_s24le
+  channels: 1
+  resampler: soxr               # aresample=resampler=soxr
+  max_start_offset_s: 0.1       # stream start_time beyond LAME delay compensation -> fail
+  max_length_diff_s: 1.0        # decoded length vs longest track -> fail (offset check replaces 5 s rule)
+
+sync:
+  reference: longest            # longest decoded track is the reference
+  window_s: 120                 # analysed at start and end of each track
+  env_rate_hz: 100              # bleed envelope rate (10 ms frames)
+  max_lag_s: 2.0
+  min_peak_confidence: 0.25     # normalised xcorr peak; below -> no correction, logged
+  min_offset_ms: 20             # correct constant offset only above this
+  max_drift_ppm: 50             # resample only above this drift
+
+clean:
+  dfn_atten_lim_db: 18
+  highpass_hz: 80
+  deess: {freq_hz: 6000, threshold_db: -30, ratio: 4}
+  compressor: {threshold_db: -20, ratio: 3, attack_ms: 5, release_ms: 100}
+  limiter: {threshold_db: -3, release_ms: 100}
+
+level:                          # leveler: runs per track after clean, before VAD/ASR/edit
+  target_lufs: -20              # static per-track integrated loudness first
+  window_s: 3.0                 # RMS window of the slow leveler
+  hop_s: 0.1
+  gate_dbfs: -50                # windows below gate hold the previous gain
+  max_gain_db: 6                # +/- clamp of leveler gain
+  smoothing_s: 1.0
+
+vad:                            # the only VAD: Silero
+  sample_rate: 16000
+  threshold: 0.5
+  min_speech_ms: 120
+  min_silence_ms: 200
+  speech_pad_ms: 30
+
+asr:
+  device: cpu
+  compute_type: float32         # int8 forbidden (garbage output)
+  language: ja
+  beam_size: 5
+  temperature: [0.0]            # no fallback; low-quality segments logged
+  condition_on_previous_text: false
+  word_timestamps: false        # segfaults; timing comes from align_kana.py
+  max_chunk_s: 25               # VAD islands merged into chunks up to this length
+  merge_gap_s: 0.6
+  log_prob_threshold: -1.0      # logged as fallback-would-trigger
+  compression_ratio_threshold: 2.4
+
+align:
+  sample_rate: 16000
+  pad_s: 0.15
+  min_word_score: 0.35          # mean per-token prob below -> segment goes to review
+  min_segment_score: 0.5
+
+text:
+  # fugashi + unidic-lite (pinned in requirements). A token is a filler only if its POS1 is in filler_pos
+  filler_pos: [フィラー, 感動詞]
+  fillers: [えー, えーと, えっと, えと, あー, あーの, あの, あのー, んー, ん, うーん, まあ, まー, そのー, えーっと, なんか]
+  backchannels: [うん, うんうん, ううん, へー, へえ, ほー, はい, はいはい, はいはいはい, なるほど, そうそう, そうね, そうですね, たしかに, 確かに, ええ, おー, あー, ああ]
+  laugh_markers: [笑, ハハ, はは, ふふ, フフ, www, 草]
+  mistake_markers: [カットで, 今のなし, 撮り直し, 言い直し]
+
+candidates:
+  long_pause:                   # 長すぎる沈黙と間: gaps in the union of per-speaker VAD
+    within_turn_min_s: 1.2      # same speaker before and after the gap
+    between_speakers_min_s: 1.5 # speaker changes across the gap
+    target_s: 0.7               # gap compressed to this (kept centred, room tone + crossfade)
+    laugh_lookahead_s: 2.0      # laugh / short non-text island within this after the gap -> review
+  filler_isolation_s: 0.15      # silence needed on both sides of a filler token
+  backchannel_max_s: 1.2
+  backchannel_keep_every_s: 10  # keep one per listener per window
+  acoustic_island_max_s: 0.8    # VAD island with no aligned text -> acoustic filler/backchannel candidate
+  overlap_onset_s: 0.5
+  yield_max_s: 1.5              # yielding speaker stops within this
+  continue_min_s: 2.0           # continuing speaker keeps talking at least this
+  false_start_window_s: 3
+  false_start_min_kana: 3
+  crosstalk_min_overlap_s: 2
+  protect_head_tail_s: 30
+  laugh_protect_s: 2.0
+  context_s: 3
+
+labels:
+  # rule labels on these types are auto-approved; everything else needs approved: true
+  auto_approve_types: [long_pause, filler, backchannel]
+
+render:
+  duck_db: -20                  # the only duck depth
+  duck_fade_ms: 20
+  crossfade_ms: 10              # equal-power, applied per track at every timeline join (same on all tracks)
+  snap_window_ms: 30            # snap join to min-energy point of the summed tracks
+  roomtone_s: 2.0               # quietest VAD-negative 2 s of each track, looped
+  breath_db: -6
+  mix: dual_mono                # mono sum, written as identical L/R
+
+loudness:                       # one tool: ffmpeg loudnorm two-pass, must be linear
+  target_lufs: -16
+  max_true_peak_dbtp: -1.0
+  lra: 11
+  limiter_headroom_db: 1.5      # pre-limit so the linear gain lands this far below the TP ceiling
+  master: {sample_rate: 48000, codec: pcm_s24le, channels: 2}
+  mp3: {codec: libmp3lame, bitrate: 192k, sample_rate: 44100, channels: 2}
+
+chapters:
+  min_gap_s: 120
+
+qa:
+  lufs_tolerance: 0.5
+  clip_s: 2.0                   # same length for every exported cut clip
+  click_ratio: 8.0              # |diff| at join vs local median |diff| (x)
+  click_min_abs: 0.02           # and absolute floor (full scale)
+  level_jump_db: 6              # flagged (not failing): RMS 50 ms either side of join
+  head_tail_s: 30
+  head_tail_max_silence_s: 1.0
