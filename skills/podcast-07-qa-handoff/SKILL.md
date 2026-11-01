@@ -12,5 +12,6 @@ When the package is final (QA PASS, no pending review), hand it to the separate 
    - paths: `out/<slug>.mp3`, `out/show_notes.md`, `out/chapters.json`
    - **title**: written by the editor from the episode content (main topics), not a placeholder
    - **publish time**: default the next Monday 07:00 JST, given with its Vancouver time (PT) equivalent converted with tzdata (`zoneinfo` America/Vancouver; never hardcode PST/PDT); use another time only if the owner says so
+   - **ad insertion point**: start of the 0.4 s pre-jingle silence of the mid-show jingle on the final MP3 timeline (`logs/jingle.json` jingle_start_s − `jingle.pre_silence_s`), in seconds (0.01 s) and mm:ss.xx, as printed by `show_notes.py`; if no jingle was applied it is listed under missing — tell the owner
    - **artwork**: the show default
 3. No personal info in the handoff beyond what is in the show notes.

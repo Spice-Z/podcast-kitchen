@@ -20,3 +20,12 @@ def test_package_copies_show_notes_into_out(tmp_path):
     assert (tmp_path / "out/show_notes.md").read_text() == "# notes" and pk["missing"] == []
     assert pk["artwork"] == "show default" and pk["title"] == "タイトル" and "JST" in pk["publish_at_jst"]
     assert "Vancouver time (PT)" in pk["publish_at_pt"] and "PST" not in pk["publish_at_pt"] and "PDT" not in pk["publish_at_pt"]
+
+
+def test_ad_insertion_point_is_pre_jingle_silence_start(tmp_path):
+    (tmp_path / "logs").mkdir(); (tmp_path / "out").mkdir(); (tmp_path / "manifest.json").write_text(json.dumps({"slug": "ep1"}))
+    pk = SN.package(tmp_path)
+    assert pk["ad_insertion_point"] is None and any("ad_insertion_point" in m for m in pk["missing"])
+    (tmp_path / "logs/jingle.json").write_text(json.dumps({"applied": True, "jingle_start_s": 1455.805, "quiet_s": 1455.405}))
+    ad = SN.ad_point(tmp_path)
+    assert ad == {"seconds": 1455.41, "mmss": "24:15.41"}
